@@ -93,6 +93,7 @@ impl Coord {
     }
 }
 
+#[derive(Clone)]
 struct Vegetable {
     pos: Coord,
     s_day: usize, // s_day の頭に生える
@@ -101,11 +102,11 @@ struct Vegetable {
 }
 
 struct Input {
-    vegetable: Vec<Vegetable>,
+    vegets: Vec<Vegetable>,
 }
 impl Input {
     fn new(rcsev: Vec<(usize, usize, usize, usize, usize)>) -> Self {
-        let mut vegetable = vec![];
+        let mut vegets = vec![];
         for (r, c, s, e, v) in rcsev {
             let veget = Vegetable {
                 pos: Coord::from_usize_pair((c, r)),
@@ -113,9 +114,84 @@ impl Input {
                 e_day: e,
                 value: v,
             };
-            vegetable.push(veget);
+            vegets.push(veget);
         }
-        Input { vegetable }
+        Input { vegets }
+    }
+}
+
+enum Command {
+    Buy(Coord),
+    Move((Coord, Coord)),
+    Wait,
+}
+impl Command {
+    fn to_str(&self) -> String {
+        match self {
+            Self::Buy(pos) => format!("{} {}", pos.y, pos.x),
+            Self::Move((from, to)) => format!("{} {} {} {}", from.y, from.x, to.y, to.x),
+            Self::Wait => String::from("-1"),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct State {
+    day: usize,
+    money: usize,
+    machines: Vec<Coord>,
+    field: Vec<Vec<Option<Vegetable>>>,
+}
+impl State {
+    fn new() -> Self {
+        State {
+            day: 0,
+            money: 1,
+            machines: vec![],
+            field: vec![vec![None; N]; N],
+        }
+    }
+
+    fn action(&mut self, input: &Input, com: Command) {
+        if self.day == T {
+            return;
+        }
+
+        // do command
+        // TODO
+
+        // put veget
+        for i in 0..M {
+            let veg = &input.vegets[i];
+            if veg.s_day > self.day {
+                break;
+            }
+            if veg.s_day == self.day {
+                self.field[veg.pos.y as usize][veg.pos.x as usize] = Some(veg.clone());
+            }
+        }
+
+        // calc money
+        for machine in &self.machines {
+            if let Some(veg) = machine.access_matrix(&self.field) {
+                // TODO: machine が全て連結してる前提になっているが、ちゃんと計算する
+                self.money += veg.value * self.machines.len();
+            }
+        }
+
+        // delete veget
+        for y in 0..N {
+            for x in 0..N {
+                if let Some(veg) = &self.field[y][x] {
+                    if veg.e_day == self.day {
+                        self.field[y][x] = None;
+                    }
+                }
+            }
+        }
+
+        // day incr
+        self.day += 1;
     }
 }
 
@@ -131,9 +207,7 @@ fn main() {
         rcsev: [(usize, usize, usize, usize, usize); M],
     }
 
-    for _ in 0..T {
-        println!("{}", -1);
-    }
+    let input = Input::new(rcsev);
 
     eprintln!("{}ms", system_time.elapsed().unwrap().as_millis());
 }
