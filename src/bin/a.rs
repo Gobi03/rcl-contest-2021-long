@@ -120,6 +120,7 @@ impl Input {
     }
 }
 
+#[derive(Clone)]
 enum Command {
     Buy(Coord),
     Move((Coord, Coord)),
@@ -141,6 +142,7 @@ struct State {
     money: usize,
     machines: Vec<Coord>,
     field: Vec<Vec<Option<Vegetable>>>,
+    ans: Vec<Command>,
 }
 impl State {
     fn new() -> Self {
@@ -149,16 +151,35 @@ impl State {
             money: 1,
             machines: vec![],
             field: vec![vec![None; N]; N],
+            ans: vec![],
         }
     }
 
+    fn buy_cost(&self) -> usize {
+        let a = self.machines.len() + 1;
+        a * a * a
+    }
+
+    // valid　な操作が来る前提
     fn action(&mut self, input: &Input, com: Command) {
+        println!("{}: {}", self.day, self.money);
         if self.day == T {
             return;
         }
 
         // do command
-        // TODO
+        match com {
+            Command::Buy(pos) => {
+                self.money -= self.buy_cost();
+                self.machines.push(pos);
+            }
+            Command::Move((from, to)) => {
+                self.machines.retain(|pos| *pos != from);
+                self.machines.push(to);
+            }
+            Command::Wait => (),
+        }
+        self.ans.push(com);
 
         // put veget
         for i in 0..M {
@@ -208,6 +229,23 @@ fn main() {
     }
 
     let input = Input::new(rcsev);
+    let mut st = State::new();
+
+    for d in 0..T {
+        let n = st.machines.len();
+        let command = if st.money >= st.buy_cost() && n < N * N {
+            let pos = Coord::from_usize_pair((n % N, n / N));
+            Command::Buy(pos)
+        } else {
+            Command::Wait
+        };
+
+        st.action(&input, command);
+    }
+
+    for com in st.ans.iter() {
+        println!("{}", com.to_str());
+    }
 
     eprintln!("{}ms", system_time.elapsed().unwrap().as_millis());
 }
