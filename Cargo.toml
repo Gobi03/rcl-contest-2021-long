@@ -1,0 +1,20 @@
+[package]
+name = "rcl-contest-2021-long"
+version = "0.1.0"
+authors = ["Tatsuya Katsushima <t.katsushima@opt.ne.jp>"]
+edition = "2018"
+
+# dependencies added to new project
+# cf. https://qiita.com/maguro_tuna/items/316068eeb8c5b9b31ed8#dependencies
+[dependencies]
+# proconio = "*"
+# competitive = { git = "https://github.com/tanakh/competitive-rs.git" }
+proconio = { version = "0.3.6", features = ["derive"] }
+rand = { version = "0.7.3", features = ["small_rng"] }
+rand_pcg = "0.2.1"
+num = "0.2.1"
+regex = "1.3.6"
+
+[profile.release]
+lto = true
+panic = 'abort'
