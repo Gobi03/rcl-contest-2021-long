@@ -162,9 +162,54 @@ impl State {
         a * a * a
     }
 
+    // posの機械群に隣接する空きマスの一覧を返す
+    fn neighber_empty_blocks(&self, pos: &Coord) -> Vec<Coord> {
+        let mut res = vec![];
+
+        let mut dp = vec![vec![false; N]; N];
+        let mut q = VecDeque::new();
+        pos.set_matrix(&mut dp, true);
+        q.push_back(pos.clone());
+        while !q.is_empty() {
+            let pos = q.pop_front().unwrap();
+            for e in pos.mk_4dir() {
+                if !e.access_matrix(&dp) {
+                    if *e.access_matrix(&self.machine_dim) {
+                        e.set_matrix(&mut dp, true);
+                        q.push_back(e);
+                    } else {
+                        res.push(e);
+                    }
+                }
+            }
+        }
+
+        res
+    }
+
+    // pos に設置された機械と連結してる個数を返す（自身も数える）
+    fn count_connections(&self, pos: &Coord) -> usize {
+        let mut dp = vec![vec![false; N]; N];
+        let mut cnt = 1;
+        let mut q = VecDeque::new();
+        pos.set_matrix(&mut dp, true);
+        q.push_back(pos.clone());
+        while !q.is_empty() {
+            let pos = q.pop_front().unwrap();
+            for e in pos.mk_4dir() {
+                if !e.access_matrix(&dp) && *e.access_matrix(&self.machine_dim) {
+                    cnt += 1;
+                    e.set_matrix(&mut dp, true);
+                    q.push_back(e);
+                }
+            }
+        }
+
+        cnt
+    }
+
     // valid　な操作が来る前提
     fn action(&mut self, input: &Input, com: Command) {
-        // println!("{}: {}", self.day, self.money);
         if self.day == T {
             return;
         }
@@ -200,24 +245,7 @@ impl State {
         // calc money
         for machine in &self.machines {
             if let Some(veg) = machine.access_matrix(&self.field) {
-                // TODO: machine が全て連結してる前提になっているが、ちゃんと計算する
-                let mut dp = vec![vec![false; N]; N];
-                let mut cnt = 1;
-                let mut q = VecDeque::new();
-                veg.pos.set_matrix(&mut dp, true);
-                q.push_back(veg.pos.clone());
-                while !q.is_empty() {
-                    let pos = q.pop_front().unwrap();
-                    for e in pos.mk_4dir() {
-                        if !e.access_matrix(&dp) && *e.access_matrix(&self.machine_dim) {
-                            cnt += 1;
-                            e.set_matrix(&mut dp, true);
-                            q.push_back(e);
-                        }
-                    }
-                }
-
-                self.money += veg.value * cnt;
+                self.money += veg.value * self.count_connections(&veg.pos);
                 machine.set_matrix(&mut self.field, None);
             }
         }
