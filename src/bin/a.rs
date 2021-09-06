@@ -141,6 +141,7 @@ struct State {
     day: usize,
     money: usize,
     machines: Vec<Coord>,
+    machine_dim: Vec<Vec<bool>>,
     field: Vec<Vec<Option<Vegetable>>>,
     ans: Vec<Command>,
 }
@@ -150,6 +151,7 @@ impl State {
             day: 0,
             money: 1,
             machines: vec![],
+            machine_dim: vec![vec![false; N]; N],
             field: vec![vec![None; N]; N],
             ans: vec![],
         }
@@ -172,10 +174,13 @@ impl State {
             Command::Buy(pos) => {
                 self.money -= self.buy_cost();
                 self.machines.push(pos);
+                pos.set_matrix(&mut self.machine_dim, true);
             }
             Command::Move((from, to)) => {
                 self.machines.retain(|pos| *pos != from);
                 self.machines.push(to);
+                from.set_matrix(&mut self.machine_dim, false);
+                to.set_matrix(&mut self.machine_dim, true);
             }
             Command::Wait => (),
         }
@@ -196,7 +201,23 @@ impl State {
         for machine in &self.machines {
             if let Some(veg) = machine.access_matrix(&self.field) {
                 // TODO: machine が全て連結してる前提になっているが、ちゃんと計算する
-                self.money += veg.value * self.machines.len();
+                let mut dp = vec![vec![false; N]; N];
+                let mut cnt = 1;
+                let mut q = VecDeque::new();
+                veg.pos.set_matrix(&mut dp, true);
+                q.push_back(veg.pos.clone());
+                while !q.is_empty() {
+                    let pos = q.pop_front().unwrap();
+                    for e in pos.mk_4dir() {
+                        if !e.access_matrix(&dp) && *e.access_matrix(&self.machine_dim) {
+                            cnt += 1;
+                            e.set_matrix(&mut dp, true);
+                            q.push_back(e);
+                        }
+                    }
+                }
+
+                self.money += veg.value * cnt;
                 machine.set_matrix(&mut self.field, None);
             }
         }
