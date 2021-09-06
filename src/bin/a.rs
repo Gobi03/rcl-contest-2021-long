@@ -162,7 +162,7 @@ impl State {
 
     // valid　な操作が来る前提
     fn action(&mut self, input: &Input, com: Command) {
-        println!("{}: {}", self.day, self.money);
+        // println!("{}: {}", self.day, self.money);
         if self.day == T {
             return;
         }
@@ -197,6 +197,7 @@ impl State {
             if let Some(veg) = machine.access_matrix(&self.field) {
                 // TODO: machine が全て連結してる前提になっているが、ちゃんと計算する
                 self.money += veg.value * self.machines.len();
+                machine.set_matrix(&mut self.field, None);
             }
         }
 
