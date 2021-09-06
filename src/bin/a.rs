@@ -234,7 +234,7 @@ fn main() {
 
     for d in 0..T {
         let n = st.machines.len();
-        let command = if st.money >= st.buy_cost() && n < N * N {
+        let command = if st.money >= st.buy_cost() && n < N + 13 {
             let pos = Coord::from_usize_pair((n % N, n / N));
             Command::Buy(pos)
         } else {
@@ -248,5 +248,6 @@ fn main() {
         println!("{}", com.to_str());
     }
 
+    eprintln!("score: {}", st.money);
     eprintln!("{}ms", system_time.elapsed().unwrap().as_millis());
 }
