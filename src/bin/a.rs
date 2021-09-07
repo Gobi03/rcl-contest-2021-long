@@ -162,6 +162,15 @@ impl State {
         a * a * a
     }
 
+    fn set_machine(&mut self, pos: &Coord) {
+        self.machines.push(pos.clone());
+        pos.set_matrix(&mut self.machine_dim, true);
+    }
+    fn delete_machine(&mut self, pos: &Coord) {
+        self.machines.retain(|p| *p != *pos);
+        pos.set_matrix(&mut self.machine_dim, false);
+    }
+
     // posの機械群に隣接する空きマスの一覧を返す
     fn neighber_empty_blocks(&self, pos: &Coord) -> Vec<Coord> {
         let mut res = vec![];
@@ -208,6 +217,24 @@ impl State {
         cnt
     }
 
+    fn can_cut_in_keep_connect(&mut self, pos: &Coord) -> bool {
+        self.delete_machine(&pos);
+        // 始点候補達
+        let mut sps: Vec<Coord> = pos
+            .mk_4dir()
+            .into_iter()
+            .filter(|p| *p.access_matrix(&self.machine_dim))
+            .collect();
+        let cnt = match sps.pop() {
+            None => 0,
+            Some(p) => self.count_connections(&p),
+        };
+
+        self.set_machine(&pos);
+
+        cnt == self.machines.len() - 1
+    }
+
     // valid　な操作が来る前提
     fn action(&mut self, input: &Input, com: Command) {
         if self.day == T {
@@ -218,14 +245,11 @@ impl State {
         match com {
             Command::Buy(pos) => {
                 self.money -= self.buy_cost();
-                self.machines.push(pos);
-                pos.set_matrix(&mut self.machine_dim, true);
+                self.set_machine(&pos);
             }
             Command::Move((from, to)) => {
-                self.machines.retain(|pos| *pos != from);
-                self.machines.push(to);
-                from.set_matrix(&mut self.machine_dim, false);
-                to.set_matrix(&mut self.machine_dim, true);
+                self.delete_machine(&from);
+                self.set_machine(&to);
             }
             Command::Wait => (),
         }
