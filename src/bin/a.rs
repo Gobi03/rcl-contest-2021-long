@@ -123,14 +123,14 @@ impl Input {
 #[derive(Clone)]
 enum Command {
     Buy(Coord),
-    Move((Coord, Coord)),
+    Move(Coord, Coord),
     Wait,
 }
 impl Command {
     fn to_str(&self) -> String {
         match self {
             Self::Buy(pos) => format!("{} {}", pos.y, pos.x),
-            Self::Move((from, to)) => format!("{} {} {} {}", from.y, from.x, to.y, to.x),
+            Self::Move(from, to) => format!("{} {} {} {}", from.y, from.x, to.y, to.x),
             Self::Wait => String::from("-1"),
         }
     }
@@ -164,6 +164,10 @@ impl State {
         let a = self.machines.len() + 1;
         a * a * a
     }
+    // Buyコマンドを使えるか
+    fn can_buy(&self) -> bool {
+        self.buy_cost() <= self.money
+    }
 
     fn set_machine(&mut self, pos: &Coord) {
         self.machines.push(pos.clone());
@@ -172,6 +176,14 @@ impl State {
     fn delete_machine(&mut self, pos: &Coord) {
         self.machines.retain(|p| *p != *pos);
         pos.set_matrix(&mut self.machine_dim, false);
+    }
+
+    // その日の残っているvalue
+    fn get_today_value(&self, pos: &Coord) -> usize {
+        pos.access_matrix(&self.field)
+            .clone()
+            .map(|veget| veget.value)
+            .unwrap_or(0)
     }
 
     // その日が開始日の野菜の設置
@@ -264,7 +276,7 @@ impl State {
                 self.money -= self.buy_cost();
                 self.set_machine(&pos);
             }
-            Command::Move((from, to)) => {
+            Command::Move(from, to) => {
                 self.delete_machine(&from);
                 self.set_machine(&to);
             }
@@ -316,12 +328,49 @@ fn main() {
     let mut st = State::new(&input);
 
     for d in 0..T {
-        let n = st.machines.len();
-        let command = if st.money >= st.buy_cost() && n < N + 13 {
-            let pos = Coord::from_usize_pair((n % N, n / N));
-            Command::Buy(pos)
-        } else {
-            Command::Wait
+        if d == 0 {
+            let command = Command::Buy(Coord::from_usize_pair((N / 2, N / 2)));
+            st.action(&input, command);
+            continue;
+        }
+
+        let n = (&st).machines.len();
+        // 隣接マスで設置したいマスを探す(一手読み)
+        let any_machine = (&st).machines[0];
+        let (_, repr) = st.neighber_empty_blocks(&any_machine).into_iter().fold(
+            (0, None),
+            |(max, res), machine| {
+                let value = st.get_today_value(&machine);
+                if max < value {
+                    (value, Some(machine))
+                } else {
+                    (max, res)
+                }
+            },
+        );
+        // 買えるなら買う
+        let command = match repr {
+            None => Command::Wait,
+            Some(pos) => {
+                if st.can_buy() && n < N + 13 {
+                    Command::Buy(pos)
+                } else {
+                    // 取り除いてもよくて、かつ移動先よりスコアが小さいマスを探す
+                    let mut res = None;
+                    let mut min_value = 1e15 as usize;
+                    for machine in (&st).machines.clone().iter() {
+                        let value = st.get_today_value(&machine);
+                        if value < min_value {
+                            if st.can_cut_in_keep_connect(&machine) {
+                                min_value = value;
+                                res = Some(machine.clone());
+                            }
+                        }
+                    }
+
+                    res.map_or(Command::Wait, |from| Command::Move(from, pos))
+                }
+            }
         };
 
         st.action(&input, command);
