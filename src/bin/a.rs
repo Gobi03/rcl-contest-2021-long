@@ -136,6 +136,7 @@ impl Command {
     }
 }
 
+// その日の野菜は置かれた状態で始める
 #[derive(Clone)]
 struct State {
     day: usize,
@@ -146,15 +147,17 @@ struct State {
     ans: Vec<Command>,
 }
 impl State {
-    fn new() -> Self {
-        State {
+    fn new(input: &Input) -> Self {
+        let mut st = State {
             day: 0,
             money: 1,
             machines: vec![],
             machine_dim: vec![vec![false; N]; N],
             field: vec![vec![None; N]; N],
             ans: vec![],
-        }
+        };
+        st.put_veget(&input);
+        st
     }
 
     fn buy_cost(&self) -> usize {
@@ -169,6 +172,20 @@ impl State {
     fn delete_machine(&mut self, pos: &Coord) {
         self.machines.retain(|p| *p != *pos);
         pos.set_matrix(&mut self.machine_dim, false);
+    }
+
+    // その日が開始日の野菜の設置
+    // 高速化可能
+    fn put_veget(&mut self, input: &Input) {
+        for i in 0..M {
+            let veg = &input.vegets[i];
+            if veg.s_day > self.day {
+                break;
+            }
+            if veg.s_day == self.day {
+                self.field[veg.pos.y as usize][veg.pos.x as usize] = Some(veg.clone());
+            }
+        }
     }
 
     // posの機械群に隣接する空きマスの一覧を返す
@@ -255,17 +272,6 @@ impl State {
         }
         self.ans.push(com);
 
-        // put veget
-        for i in 0..M {
-            let veg = &input.vegets[i];
-            if veg.s_day > self.day {
-                break;
-            }
-            if veg.s_day == self.day {
-                self.field[veg.pos.y as usize][veg.pos.x as usize] = Some(veg.clone());
-            }
-        }
-
         // calc money
         for machine in &self.machines {
             if let Some(veg) = machine.access_matrix(&self.field) {
@@ -287,6 +293,10 @@ impl State {
 
         // day incr
         self.day += 1;
+
+        // put veget
+        // 翌日分の野菜を設置して終える
+        self.put_veget(input);
     }
 }
 
@@ -303,7 +313,7 @@ fn main() {
     }
 
     let input = Input::new(rcsev);
-    let mut st = State::new();
+    let mut st = State::new(&input);
 
     for d in 0..T {
         let n = st.machines.len();
