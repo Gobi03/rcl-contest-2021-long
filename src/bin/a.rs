@@ -219,9 +219,10 @@ impl State {
     }
 
     // その日が開始日の野菜の設置
-    // 高速化可能
     fn put_veget(&mut self, input: &Input) {
-        for i in 0..M {
+        let bs = BinarySearch { day: self.day };
+        let m = bs.solve(0, M, &input.vegets);
+        for i in m..M {
             let veg = &input.vegets[i];
             if veg.s_day > self.day {
                 break;
@@ -493,5 +494,30 @@ mod bs {
             pq = next_pq;
         }
         pq.pop().unwrap().node
+    }
+}
+
+// 条件を満たす最小の値を返す
+struct BinarySearch {
+    day: usize,
+}
+
+impl BinarySearch {
+    fn check(&self, i: usize, vegets: &Vec<Vegetable>) -> bool {
+        vegets[i].s_day >= self.day
+    }
+
+    fn solve(&self, min: usize, max: usize, vegets: &Vec<Vegetable>) -> usize {
+        let mid: usize = (max + min) / 2;
+        match max - min {
+            0 | 1 => match self.check(min, &vegets) {
+                true => min,
+                false => max,
+            },
+            _ => match self.check(mid, &vegets) {
+                true => self.solve(min, mid, &vegets),
+                false => self.solve(mid, max, &vegets),
+            },
+        }
     }
 }
