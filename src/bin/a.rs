@@ -101,6 +101,7 @@ struct Vegetable {
     value: usize,
 }
 
+#[derive(Clone)]
 struct Input {
     vegets: Vec<Vegetable>,
 }
@@ -153,8 +154,8 @@ impl bs::BeamSearch for BeamSearch {
         for neb in st.neighber_empty_blocks(&st.machines[0]) {
             let mut next_st = st.clone();
             // お金を払わずにマシンをセットする(ことで任意に増やせる場合のシミュレートをする)
-            next_st.set_machine(&neb);
-            next_st.action(&self.input, Command::Wait);
+            next_st.money += st.buy_cost();
+            next_st.action(&self.input, Command::Buy(neb));
 
             res.push(next_st.clone());
         }
@@ -358,36 +359,44 @@ fn main() {
     let input = Input::new(rcsev);
     let mut st = State::new(&input);
 
+    let bs_opt = bs::BeamSearchOption {
+        beam_width: 10,
+        depth: 2,
+    };
+
     for d in 0..T {
+        if d % 100 == 0 {
+            eprintln!("day: {}", d);
+        }
         if d == 0 {
             let command = Command::Buy(Coord::from_usize_pair((N / 2, N / 2)));
             st.action(&input, command);
             continue;
         }
 
+        // TODO: 毎回input cloneするの嫌そう
+        let bs = BeamSearch {
+            input: input.clone(),
+            init_score: st.money as isize,
+        };
+
+        let ans_st = bs::search(&bs, st.clone(), &bs_opt);
+
         let n = (&st).machines.len();
-        // 隣接マスで設置したいマスを探す(一手読み)
-        let any_machine = (&st).machines[0];
-        let (_, repr) = st.neighber_empty_blocks(&any_machine).into_iter().fold(
-            (0, None),
-            |(max, res), machine| {
-                let value = st.get_today_value(&machine);
-                if max < value {
-                    (value, Some(machine))
-                } else {
-                    (max, res)
-                }
-            },
-        );
-        // 買えるなら買う
-        let command = match repr {
-            None => Command::Wait,
-            Some(pos) => {
+        // Buyで持ってるやつが、置きたい箇所
+        let to_target = ans_st.ans[d].clone();
+        let command = match to_target {
+            Command::Move(_, _) => unreachable!(),
+            Command::Wait => Command::Wait,
+            Command::Buy(pos) => {
+                // 買えるなら買えばいい
                 if st.can_buy() && n <= 35 {
                     Command::Buy(pos)
                 } else {
-                    // 取り除いてもよくて、かつ移動先よりスコアが小さいマスを探す
-                    let mut res = None;
+                    let mut res = Command::Wait;
+
+                    // 今ターン予定設置マスを妨げずに取り除る、一番減少スコアが小さいマスを探す(一手読み)
+                    // TODO: 予定のもの全てを織り込みたい
                     let mut min_value = 1e15 as usize;
                     st.set_machine(&pos);
                     for machine in (&st).machines.clone().iter() {
@@ -398,13 +407,13 @@ fn main() {
                         if value < min_value {
                             if st.can_cut_in_keep_connect(&machine) {
                                 min_value = value;
-                                res = Some(machine.clone());
+                                res = Command::Move(machine.clone(), pos.clone());
                             }
                         }
                     }
                     st.delete_machine(&pos);
 
-                    res.map_or(Command::Wait, |from| Command::Move(from, pos))
+                    res
                 }
             }
         };
@@ -420,6 +429,7 @@ fn main() {
     eprintln!("{}ms", system_time.elapsed().unwrap().as_millis());
 }
 
+#[allow(dead_code)]
 mod bs {
     use std::cmp::Ordering;
     use std::collections::BinaryHeap;
@@ -449,39 +459,39 @@ mod bs {
     }
 
     pub struct BeamSearchOption {
-        beam_width: usize,
-        depth: usize,
+        pub beam_width: usize,
+        pub depth: usize,
     }
     pub trait BeamSearch {
         type State: Clone;
 
         fn transit(&self, st: &Self::State) -> Vec<Self::State>;
         fn evaluate(&self, st: &Self::State) -> isize;
+    }
 
-        fn search(&self, init_st: Self::State, opt: BeamSearchOption) -> Self::State {
-            let mut pq: BinaryHeap<ForSort<Self::State>> = BinaryHeap::new();
-            pq.push(ForSort {
-                score: self.evaluate(&init_st),
-                node: init_st.clone(),
-            });
-            for _ in 1..=opt.depth {
-                let mut next_pq: BinaryHeap<ForSort<Self::State>> = BinaryHeap::new();
-                for _ in 0..opt.beam_width {
-                    if pq.is_empty() {
-                        break;
-                    } else {
-                        let st = pq.pop().unwrap().node;
-                        for next_st in self.transit(&st) {
-                            next_pq.push(ForSort {
-                                score: self.evaluate(&next_st),
-                                node: next_st,
-                            })
-                        }
+    pub fn search<A: BeamSearch>(bs: &A, init_st: A::State, opt: &BeamSearchOption) -> A::State {
+        let mut pq: BinaryHeap<ForSort<A::State>> = BinaryHeap::new();
+        pq.push(ForSort {
+            score: bs.evaluate(&init_st),
+            node: init_st.clone(),
+        });
+        for _ in 1..=opt.depth {
+            let mut next_pq: BinaryHeap<ForSort<A::State>> = BinaryHeap::new();
+            for _ in 0..opt.beam_width {
+                if pq.is_empty() {
+                    break;
+                } else {
+                    let st = pq.pop().unwrap().node;
+                    for next_st in bs.transit(&st) {
+                        next_pq.push(ForSort {
+                            score: bs.evaluate(&next_st),
+                            node: next_st,
+                        })
                     }
                 }
-                pq = next_pq;
             }
-            pq.pop().unwrap().node
+            pq = next_pq;
         }
+        pq.pop().unwrap().node
     }
 }
