@@ -352,13 +352,17 @@ fn main() {
         let command = match repr {
             None => Command::Wait,
             Some(pos) => {
-                if st.can_buy() && n < N + 13 {
+                if st.can_buy() && n <= 35 {
                     Command::Buy(pos)
                 } else {
                     // 取り除いてもよくて、かつ移動先よりスコアが小さいマスを探す
                     let mut res = None;
                     let mut min_value = 1e15 as usize;
+                    st.set_machine(&pos);
                     for machine in (&st).machines.clone().iter() {
+                        if *machine == pos {
+                            continue;
+                        }
                         let value = st.get_today_value(&machine);
                         if value < min_value {
                             if st.can_cut_in_keep_connect(&machine) {
@@ -367,6 +371,7 @@ fn main() {
                             }
                         }
                     }
+                    st.delete_machine(&pos);
 
                     res.map_or(Command::Wait, |from| Command::Move(from, pos))
                 }
