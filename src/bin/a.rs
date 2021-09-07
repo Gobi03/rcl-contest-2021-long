@@ -93,52 +93,6 @@ impl Coord {
     }
 }
 
-// 第一要素を比較対象とする組
-// TODO: PartialEq, Eq の derive 消せるはず
-#[derive(Clone, PartialEq, Eq)]
-struct Fst<T>(isize, T);
-impl<T: PartialOrd> PartialOrd for Fst<T> {
-    fn partial_cmp(&self, other: &Fst<T>) -> Option<Ordering> {
-        self.0.partial_cmp(&other.0)
-    }
-}
-impl<T: Ord> Ord for Fst<T> {
-    fn cmp(&self, other: &Fst<T>) -> Ordering {
-        self.0.cmp(&other.0)
-    }
-}
-
-struct BeamSearchOption {
-    beam_width: usize,
-    depth: usize,
-}
-trait BeamSearch {
-    type State: Clone + PartialOrd + Ord;
-
-    fn transit(st: &Self::State) -> Vec<Self::State>;
-    fn evaluate(st: &Self::State) -> isize;
-
-    fn search(&self, init_st: Self::State, opt: BeamSearchOption) -> Self::State {
-        let mut pq: BinaryHeap<Fst<Self::State>> = BinaryHeap::new();
-        pq.push(Fst(Self::evaluate(&init_st), init_st.clone()));
-        for _ in 1..=opt.depth {
-            let mut next_pq: BinaryHeap<Fst<Self::State>> = BinaryHeap::new();
-            for _ in 0..opt.beam_width {
-                if pq.is_empty() {
-                    break;
-                } else {
-                    let Fst(_, st) = pq.pop().unwrap();
-                    for next_st in Self::transit(&st) {
-                        next_pq.push(Fst(Self::evaluate(&next_st), next_st))
-                    }
-                }
-            }
-            pq = next_pq;
-        }
-        pq.pop().unwrap().1
-    }
-}
-
 #[derive(Clone, PartialEq, Eq)]
 struct Vegetable {
     pos: Coord,
@@ -182,8 +136,39 @@ impl Command {
     }
 }
 
+struct BeamSearch {
+    input: Input,
+    init_score: isize,
+}
+impl bs::BeamSearch for BeamSearch {
+    type State = State;
+
+    // １ターンに１機械任意に増やせるシミュレート
+    fn transit(&self, st: &Self::State) -> Vec<Self::State> {
+        let mut res = vec![];
+
+        let mut stay_next_st = st.clone();
+        stay_next_st.action(&self.input, Command::Wait);
+        res.push(stay_next_st);
+        for neb in st.neighber_empty_blocks(&st.machines[0]) {
+            let mut next_st = st.clone();
+            // お金を払わずにマシンをセットする(ことで任意に増やせる場合のシミュレートをする)
+            next_st.set_machine(&neb);
+            next_st.action(&self.input, Command::Wait);
+
+            res.push(next_st.clone());
+        }
+
+        res
+    }
+
+    fn evaluate(&self, st: &Self::State) -> isize {
+        st.money as isize - self.init_score
+    }
+}
+
 // その日の野菜は置かれた状態で始める
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 struct State {
     day: usize,
     money: usize,
@@ -433,4 +418,70 @@ fn main() {
 
     eprintln!("score: {}", st.money);
     eprintln!("{}ms", system_time.elapsed().unwrap().as_millis());
+}
+
+mod bs {
+    use std::cmp::Ordering;
+    use std::collections::BinaryHeap;
+
+    // 第一要素を比較対象とする組
+    struct ForSort<T> {
+        score: isize,
+        node: T,
+    }
+    // ダミー
+    impl<T> PartialEq for ForSort<T> {
+        fn eq(&self, other: &Self) -> bool {
+            self.score == other.score
+        }
+    }
+    impl<T> Eq for ForSort<T> {}
+
+    impl<T> PartialOrd for ForSort<T> {
+        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+            self.score.partial_cmp(&other.score)
+        }
+    }
+    impl<T> Ord for ForSort<T> {
+        fn cmp(&self, other: &Self) -> Ordering {
+            self.score.cmp(&other.score)
+        }
+    }
+
+    pub struct BeamSearchOption {
+        beam_width: usize,
+        depth: usize,
+    }
+    pub trait BeamSearch {
+        type State: Clone;
+
+        fn transit(&self, st: &Self::State) -> Vec<Self::State>;
+        fn evaluate(&self, st: &Self::State) -> isize;
+
+        fn search(&self, init_st: Self::State, opt: BeamSearchOption) -> Self::State {
+            let mut pq: BinaryHeap<ForSort<Self::State>> = BinaryHeap::new();
+            pq.push(ForSort {
+                score: self.evaluate(&init_st),
+                node: init_st.clone(),
+            });
+            for _ in 1..=opt.depth {
+                let mut next_pq: BinaryHeap<ForSort<Self::State>> = BinaryHeap::new();
+                for _ in 0..opt.beam_width {
+                    if pq.is_empty() {
+                        break;
+                    } else {
+                        let st = pq.pop().unwrap().node;
+                        for next_st in self.transit(&st) {
+                            next_pq.push(ForSort {
+                                score: self.evaluate(&next_st),
+                                node: next_st,
+                            })
+                        }
+                    }
+                }
+                pq = next_pq;
+            }
+            pq.pop().unwrap().node
+        }
+    }
 }
