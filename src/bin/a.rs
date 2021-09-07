@@ -93,7 +93,53 @@ impl Coord {
     }
 }
 
-#[derive(Clone)]
+// 第一要素を比較対象とする組
+// TODO: PartialEq, Eq の derive 消せるはず
+#[derive(Clone, PartialEq, Eq)]
+struct Fst<T>(isize, T);
+impl<T: PartialOrd> PartialOrd for Fst<T> {
+    fn partial_cmp(&self, other: &Fst<T>) -> Option<Ordering> {
+        self.0.partial_cmp(&other.0)
+    }
+}
+impl<T: Ord> Ord for Fst<T> {
+    fn cmp(&self, other: &Fst<T>) -> Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
+struct BeamSearchOption {
+    beam_width: usize,
+    depth: usize,
+}
+trait BeamSearch {
+    type State: Clone + PartialOrd + Ord;
+
+    fn transit(st: &Self::State) -> Vec<Self::State>;
+    fn evaluate(st: &Self::State) -> isize;
+
+    fn search(&self, init_st: Self::State, opt: BeamSearchOption) -> Self::State {
+        let mut pq: BinaryHeap<Fst<Self::State>> = BinaryHeap::new();
+        pq.push(Fst(Self::evaluate(&init_st), init_st.clone()));
+        for _ in 1..=opt.depth {
+            let mut next_pq: BinaryHeap<Fst<Self::State>> = BinaryHeap::new();
+            for _ in 0..opt.beam_width {
+                if pq.is_empty() {
+                    break;
+                } else {
+                    let Fst(_, st) = pq.pop().unwrap();
+                    for next_st in Self::transit(&st) {
+                        next_pq.push(Fst(Self::evaluate(&next_st), next_st))
+                    }
+                }
+            }
+            pq = next_pq;
+        }
+        pq.pop().unwrap().1
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
 struct Vegetable {
     pos: Coord,
     s_day: usize, // s_day の頭に生える
@@ -120,7 +166,7 @@ impl Input {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 enum Command {
     Buy(Coord),
     Move(Coord, Coord),
@@ -137,7 +183,7 @@ impl Command {
 }
 
 // その日の野菜は置かれた状態で始める
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct State {
     day: usize,
     money: usize,
