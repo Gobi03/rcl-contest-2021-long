@@ -139,7 +139,6 @@ impl Command {
 
 struct BeamSearch {
     input: Input,
-    init_score: isize,
 }
 impl bs::BeamSearch for BeamSearch {
     type State = State;
@@ -148,14 +147,42 @@ impl bs::BeamSearch for BeamSearch {
     fn transit(&self, st: &Self::State) -> Vec<Self::State> {
         let mut res = vec![];
 
+        // 何もしないケース
         let mut stay_next_st = st.clone();
         stay_next_st.action(&self.input, Command::Wait);
         res.push(stay_next_st);
+
         for neb in st.neighber_empty_blocks(&st.machines[0]) {
             let mut next_st = st.clone();
-            // お金を払わずにマシンをセットする(ことで任意に増やせる場合のシミュレートをする)
-            next_st.money += st.buy_cost();
-            next_st.action(&self.input, Command::Buy(neb));
+
+            // 買えるなら買えばいい
+            let command = if st.can_buy() && st.machines.len() <= 35 {
+                Command::Buy(neb)
+            } else {
+                let mut res = Command::Wait;
+
+                // 今ターン予定設置マスを妨げずに取り除ける、一番減少スコアが小さいマスを探す(一手読み)
+                // TODO: 予定のもの全てを織り込みたい
+                let mut min_value = 1e15 as usize;
+                next_st.set_machine(&neb);
+                for machine in (&st).machines.clone().iter() {
+                    if *machine == neb {
+                        continue;
+                    }
+                    let value = st.get_today_value(&machine);
+                    if value < min_value {
+                        if next_st.can_cut_in_keep_connect(&machine) {
+                            min_value = value;
+                            res = Command::Move(machine.clone(), neb.clone());
+                        }
+                    }
+                }
+                next_st.delete_machine(&neb);
+
+                res
+            };
+
+            next_st.action(&self.input, command);
 
             res.push(next_st.clone());
         }
@@ -164,7 +191,7 @@ impl bs::BeamSearch for BeamSearch {
     }
 
     fn evaluate(&self, st: &Self::State) -> isize {
-        st.money as isize - self.init_score
+        st.total_money as isize
     }
 }
 
@@ -173,6 +200,7 @@ impl bs::BeamSearch for BeamSearch {
 struct State {
     day: usize,
     money: usize,
+    total_money: usize, // これまでに得たお金の通算
     machines: Vec<Coord>,
     machine_dim: Vec<Vec<bool>>,
     field: Vec<Vec<Option<Vegetable>>>,
@@ -183,6 +211,7 @@ impl State {
         let mut st = State {
             day: 0,
             money: 1,
+            total_money: 1,
             machines: vec![],
             machine_dim: vec![vec![false; N]; N],
             field: vec![vec![None; N]; N],
@@ -320,7 +349,9 @@ impl State {
         // calc money
         for machine in &self.machines {
             if let Some(veg) = machine.access_matrix(&self.field) {
-                self.money += veg.value * self.count_connections(&veg.pos);
+                let gain = veg.value * self.count_connections(&veg.pos);
+                self.money += gain;
+                self.total_money += gain;
                 machine.set_matrix(&mut self.field, None);
             }
         }
@@ -360,69 +391,22 @@ fn main() {
     let input = Input::new(rcsev);
     let mut st = State::new(&input);
 
+    // 初日
+    let command = Command::Buy(Coord::from_usize_pair((N / 2, N / 2)));
+    st.action(&input, command);
+
+    // 二日目以降
     let bs_opt = bs::BeamSearchOption {
-        beam_width: 10,
-        depth: 2,
+        beam_width: 3,
+        depth: T - 1,
+    };
+    let bs = BeamSearch {
+        input: input.clone(),
     };
 
-    for d in 0..T {
-        if d % 100 == 0 {
-            eprintln!("day: {}", d);
-        }
-        if d == 0 {
-            let command = Command::Buy(Coord::from_usize_pair((N / 2, N / 2)));
-            st.action(&input, command);
-            continue;
-        }
+    let ans_st = bs::search(&bs, st.clone(), &bs_opt);
 
-        // TODO: 毎回input cloneするの嫌そう
-        let bs = BeamSearch {
-            input: input.clone(),
-            init_score: st.money as isize,
-        };
-
-        let ans_st = bs::search(&bs, st.clone(), &bs_opt);
-
-        let n = (&st).machines.len();
-        // Buyで持ってるやつが、置きたい箇所
-        let to_target = ans_st.ans[d].clone();
-        let command = match to_target {
-            Command::Move(_, _) => unreachable!(),
-            Command::Wait => Command::Wait,
-            Command::Buy(pos) => {
-                // 買えるなら買えばいい
-                if st.can_buy() && n <= 35 {
-                    Command::Buy(pos)
-                } else {
-                    let mut res = Command::Wait;
-
-                    // 今ターン予定設置マスを妨げずに取り除る、一番減少スコアが小さいマスを探す(一手読み)
-                    // TODO: 予定のもの全てを織り込みたい
-                    let mut min_value = 1e15 as usize;
-                    st.set_machine(&pos);
-                    for machine in (&st).machines.clone().iter() {
-                        if *machine == pos {
-                            continue;
-                        }
-                        let value = st.get_today_value(&machine);
-                        if value < min_value {
-                            if st.can_cut_in_keep_connect(&machine) {
-                                min_value = value;
-                                res = Command::Move(machine.clone(), pos.clone());
-                            }
-                        }
-                    }
-                    st.delete_machine(&pos);
-
-                    res
-                }
-            }
-        };
-
-        st.action(&input, command);
-    }
-
-    for com in st.ans.iter() {
+    for com in ans_st.ans.iter() {
         println!("{}", com.to_str());
     }
 
@@ -476,8 +460,11 @@ mod bs {
             score: bs.evaluate(&init_st),
             node: init_st.clone(),
         });
-        for _ in 1..=opt.depth {
+        for d in 1..=opt.depth {
             let mut next_pq: BinaryHeap<ForSort<A::State>> = BinaryHeap::new();
+            if d % 100 == 0 {
+                eprintln!("day: {}", d);
+            }
             for _ in 0..opt.beam_width {
                 if pq.is_empty() {
                     break;
