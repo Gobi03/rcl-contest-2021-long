@@ -144,7 +144,7 @@ impl bs::BeamSearch for BeamSearch {
     type State = State;
 
     // １ターンに１機械任意に増やせるシミュレート
-    fn transit(&self, st: &Self::State) -> Vec<Self::State> {
+    fn transit(&self, st: &Self::State, rng: &mut ThreadRng) -> Vec<Self::State> {
         let mut res = vec![];
 
         // 何もしないケース
@@ -152,11 +152,13 @@ impl bs::BeamSearch for BeamSearch {
         stay_next_st.action(&self.input, Command::Wait);
         res.push(stay_next_st);
 
-        for neb in st.neighber_empty_blocks(&st.machines[0]) {
+        let mut machines = st.get_machines();
+        machines.shuffle(rng);
+        for neb in st.neighber_empty_blocks(&machines[0]) {
             let mut next_st = st.clone();
 
             // 買えるなら買えばいい
-            let command = if st.can_buy() && st.machines.len() <= 35 {
+            let command = if st.can_buy() && st.machines_num <= 35 {
                 Command::Buy(neb)
             } else {
                 let mut res = Command::Wait;
@@ -165,7 +167,7 @@ impl bs::BeamSearch for BeamSearch {
                 // TODO: 予定のもの全てを織り込みたい
                 let mut min_value = 1e15 as usize;
                 next_st.set_machine(&neb);
-                for machine in (&st).machines.clone().iter() {
+                for machine in machines.iter() {
                     if *machine == neb {
                         continue;
                     }
@@ -241,7 +243,7 @@ struct State {
     day: usize,
     money: usize,
     total_money: usize, // これまでに得たお金の通算
-    machines: Vec<Coord>,
+    machines_num: usize,
     machine_dim: BoolMat,
     field: Vec<Vec<Option<Vegetable>>>,
     ans: Vec<Command>,
@@ -252,7 +254,7 @@ impl State {
             day: 0,
             money: 1,
             total_money: 1,
-            machines: vec![],
+            machines_num: 0,
             machine_dim: BoolMat(0, 0),
             field: vec![vec![None; N]; N],
             ans: vec![],
@@ -262,7 +264,7 @@ impl State {
     }
 
     fn buy_cost(&self) -> usize {
-        let a = self.machines.len() + 1;
+        let a = self.machines_num + 1;
         a * a * a
     }
     // Buyコマンドを使えるか
@@ -271,12 +273,24 @@ impl State {
     }
 
     fn set_machine(&mut self, pos: &Coord) {
-        self.machines.push(pos.clone());
+        self.machines_num += 1;
         self.machine_dim.put(&pos);
     }
     fn delete_machine(&mut self, pos: &Coord) {
-        self.machines.retain(|p| *p != *pos);
+        self.machines_num -= 1;
         self.machine_dim.delete(&pos);
+    }
+    fn get_machines(&self) -> Vec<Coord> {
+        let mut res = vec![];
+        for y in 0..N {
+            for x in 0..N {
+                let pos = Coord::from_usize_pair((x, y));
+                if self.machine_dim.get(&pos) {
+                    res.push(pos);
+                }
+            }
+        }
+        res
     }
 
     // その日の残っているvalue
@@ -363,7 +377,7 @@ impl State {
 
         self.set_machine(&pos);
 
-        cnt == self.machines.len() - 1
+        cnt == self.machines_num - 1
     }
 
     // valid　な操作が来る前提
@@ -387,7 +401,7 @@ impl State {
         self.ans.push(com);
 
         // calc money
-        for machine in &self.machines {
+        for machine in self.get_machines() {
             if let Some(veg) = machine.access_matrix(&self.field) {
                 let gain = veg.value * self.count_connections(&veg.pos);
                 self.money += gain;
@@ -419,7 +433,7 @@ impl State {
 #[fastout]
 fn main() {
     let system_time = SystemTime::now();
-    let mut _rng = thread_rng();
+    let mut rng = thread_rng();
 
     input! {
         _: usize,
@@ -444,18 +458,20 @@ fn main() {
         input: input.clone(),
     };
 
-    let ans_st = bs::search(&bs, st.clone(), &bs_opt);
+    let ans_st = bs::search(&bs, st, &bs_opt, &mut rng);
 
     for com in ans_st.ans.iter() {
         println!("{}", com.to_str());
     }
 
-    eprintln!("score: {}", st.money);
+    eprintln!("score: {}", ans_st.money);
+
     eprintln!("{}ms", system_time.elapsed().unwrap().as_millis());
 }
 
 #[allow(dead_code)]
 mod bs {
+    use rand::rngs::ThreadRng;
     use std::cmp::Ordering;
     use std::collections::BinaryHeap;
 
@@ -490,11 +506,16 @@ mod bs {
     pub trait BeamSearch {
         type State: Clone;
 
-        fn transit(&self, st: &Self::State) -> Vec<Self::State>;
+        fn transit(&self, st: &Self::State, rng: &mut ThreadRng) -> Vec<Self::State>;
         fn evaluate(&self, st: &Self::State) -> isize;
     }
 
-    pub fn search<A: BeamSearch>(bs: &A, init_st: A::State, opt: &BeamSearchOption) -> A::State {
+    pub fn search<A: BeamSearch>(
+        bs: &A,
+        init_st: A::State,
+        opt: &BeamSearchOption,
+        rng: &mut ThreadRng,
+    ) -> A::State {
         let mut pq: BinaryHeap<ForSort<A::State>> = BinaryHeap::new();
         pq.push(ForSort {
             score: bs.evaluate(&init_st),
@@ -510,7 +531,7 @@ mod bs {
                     break;
                 } else {
                     let st = pq.pop().unwrap().node;
-                    for next_st in bs.transit(&st) {
+                    for next_st in bs.transit(&st, rng) {
                         next_pq.push(ForSort {
                             score: bs.evaluate(&next_st),
                             node: next_st,
