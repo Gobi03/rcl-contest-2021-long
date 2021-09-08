@@ -401,12 +401,19 @@ impl State {
         self.ans.push(com);
 
         // calc money
-        for machine in self.get_machines() {
-            if let Some(veg) = machine.access_matrix(&self.field) {
-                let gain = veg.value * self.count_connections(&veg.pos);
-                self.money += gain;
-                self.total_money += gain;
-                machine.set_matrix(&mut self.field, None);
+        // Vecのメモリ割り当てを避けるために、get_machines を使っていない
+        for y in 0..N {
+            for x in 0..N {
+                let pos = Coord::from_usize_pair((x, y));
+                if self.machine_dim.get(&pos) {
+                    let machine = pos;
+                    if let Some(veg) = machine.access_matrix(&self.field) {
+                        let gain = veg.value * self.count_connections(&veg.pos);
+                        self.money += gain;
+                        self.total_money += gain;
+                        machine.set_matrix(&mut self.field, None);
+                    }
+                }
             }
         }
 
