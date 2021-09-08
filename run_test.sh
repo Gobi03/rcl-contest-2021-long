@@ -10,8 +10,8 @@ output_file="${tester_dir}/output_${test_num}.txt"
 
 judge_file="${tester_dir}/judge.py"
 
-# cargo run --bin a < ${input_file} > ${output_file}
+# cargo run --bin a < "${input_file}" > "${output_file}"
 cargo build --release
-../target/release/a < ${input_file} > ${output_file}
+../target/release/a < "${input_file}" > "${output_file}"
 
-python ${judge_file} ${input_file} ${output_file}
+python "${judge_file}" "${input_file}" "${output_file}"
