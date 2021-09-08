@@ -195,6 +195,46 @@ impl bs::BeamSearch for BeamSearch {
     }
 }
 
+// (y: 0~7, y:8~15). 16*16 == 256 == 128 * 2
+// Vec<Vec<bool>> を表現. 横書き方向に１桁目から埋めていく.
+#[derive(Clone)]
+struct BoolMat(u128, u128);
+impl BoolMat {
+    fn get(&self, pos: &Coord) -> bool {
+        if pos.y <= 7 {
+            let i = pos.y * 16 + pos.x % 16;
+            self.0 & (1 << i) > 0
+        } else {
+            let i = (pos.y - 8) * 16 + pos.x % 16;
+            self.1 & (1 << i) > 0
+        }
+    }
+
+    fn put(&mut self, pos: &Coord) {
+        if pos.y <= 7 {
+            let i = pos.y * 16 + pos.x % 16;
+            self.0 = self.0 | (1 << i);
+        } else {
+            let i = (pos.y - 8) * 16 + pos.x % 16;
+            self.1 = self.1 | (1 << i);
+        }
+    }
+
+    fn delete(&mut self, pos: &Coord) {
+        if pos.y <= 7 {
+            let i = pos.y * 16 + pos.x % 16;
+            if self.0 & (1 << i) > 1 {
+                self.0 -= 1 << i;
+            }
+        } else {
+            let i = (pos.y - 8) * 16 + pos.x % 16;
+            if self.1 & (1 << i) > 0 {
+                self.1 -= 1 << i;
+            }
+        }
+    }
+}
+
 // その日の野菜は置かれた状態で始める
 #[derive(Clone)]
 struct State {
@@ -202,7 +242,7 @@ struct State {
     money: usize,
     total_money: usize, // これまでに得たお金の通算
     machines: Vec<Coord>,
-    machine_dim: Vec<Vec<bool>>,
+    machine_dim: BoolMat,
     field: Vec<Vec<Option<Vegetable>>>,
     ans: Vec<Command>,
 }
@@ -213,7 +253,7 @@ impl State {
             money: 1,
             total_money: 1,
             machines: vec![],
-            machine_dim: vec![vec![false; N]; N],
+            machine_dim: BoolMat(0, 0),
             field: vec![vec![None; N]; N],
             ans: vec![],
         };
@@ -232,11 +272,11 @@ impl State {
 
     fn set_machine(&mut self, pos: &Coord) {
         self.machines.push(pos.clone());
-        pos.set_matrix(&mut self.machine_dim, true);
+        self.machine_dim.put(&pos);
     }
     fn delete_machine(&mut self, pos: &Coord) {
         self.machines.retain(|p| *p != *pos);
-        pos.set_matrix(&mut self.machine_dim, false);
+        self.machine_dim.delete(&pos);
     }
 
     // その日の残っているvalue
@@ -274,7 +314,7 @@ impl State {
             let pos = q.pop_front().unwrap();
             for e in pos.mk_4dir() {
                 if !e.access_matrix(&dp) {
-                    if *e.access_matrix(&self.machine_dim) {
+                    if self.machine_dim.get(&e) {
                         e.set_matrix(&mut dp, true);
                         q.push_back(e);
                     } else {
@@ -297,7 +337,7 @@ impl State {
         while !q.is_empty() {
             let pos = q.pop_front().unwrap();
             for e in pos.mk_4dir() {
-                if !e.access_matrix(&dp) && *e.access_matrix(&self.machine_dim) {
+                if !e.access_matrix(&dp) && self.machine_dim.get(&e) {
                     cnt += 1;
                     e.set_matrix(&mut dp, true);
                     q.push_back(e);
@@ -314,7 +354,7 @@ impl State {
         let mut sps: Vec<Coord> = pos
             .mk_4dir()
             .into_iter()
-            .filter(|p| *p.access_matrix(&self.machine_dim))
+            .filter(|p| self.machine_dim.get(&p))
             .collect();
         let cnt = match sps.pop() {
             None => 0,
