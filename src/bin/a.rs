@@ -167,16 +167,21 @@ struct BeamSearch {
     input: Input,
     dp_table: DpTable,
 }
-impl bs::BeamSearch for BeamSearch {
+impl BeamSearchTrait for BeamSearch {
     type State = State;
 
     // １ターンに１機械任意に増やせるシミュレート
-    fn transit(&mut self, st: &Self::State, rng: &mut ThreadRng) -> Vec<Self::State> {
+    fn transit(
+        &mut self,
+        st: &Self::State,
+        rng: &mut ThreadRng,
+        next_commands_vec_index: usize,
+    ) -> Vec<Self::State> {
         let mut res = vec![];
 
         // 何もしないケース
         let mut stay_next_st = st.clone();
-        stay_next_st.action(&self.input, Command::Wait);
+        stay_next_st.action(&self.input, Command::Wait, next_commands_vec_index);
         res.push(stay_next_st);
 
         let mut machines = st.get_machines();
@@ -211,7 +216,7 @@ impl bs::BeamSearch for BeamSearch {
                 res
             };
 
-            next_st.action(&self.input, command);
+            next_st.action(&self.input, command, next_commands_vec_index);
 
             res.push(next_st.clone());
         }
@@ -273,7 +278,8 @@ struct State {
     machines_num: usize,
     machine_dim: BoolMat,
     field: Vec<Vec<Option<Vegetable>>>,
-    ans: Vec<Command>,
+    this_turn_command: Command,
+    pre_commands_index: usize, // 高速化目的. bs::search内で使う
 }
 impl State {
     fn new(input: &Input) -> Self {
@@ -284,7 +290,8 @@ impl State {
             machines_num: 0,
             machine_dim: BoolMat(0, 0),
             field: vec![vec![None; N]; N],
-            ans: vec![],
+            this_turn_command: Command::Wait,
+            pre_commands_index: 0, // dummy
         };
         st.put_veget(&input);
         st
@@ -408,10 +415,13 @@ impl State {
     }
 
     // valid　な操作が来る前提
-    fn action(&mut self, input: &Input, com: Command) {
+    fn action(&mut self, input: &Input, com: Command, next_commands_vec_index: usize) {
         if self.day == T {
             return;
         }
+
+        // 高速化用。search関数内で使う。
+        self.pre_commands_index = next_commands_vec_index;
 
         // do command
         match com {
@@ -425,7 +435,7 @@ impl State {
             }
             Command::Wait => (),
         }
-        self.ans.push(com);
+        self.this_turn_command = com;
 
         // calc money
         // Vecのメモリ割り当てを避けるために、get_machines を使っていない
@@ -483,10 +493,10 @@ fn main() {
 
     // 初日
     let command = Command::Buy(Coord::from_usize_pair((N / 2, N / 2)));
-    st.action(&input, command);
+    st.action(&input, command, 0);
 
     // 二日目以降
-    let bs_opt = bs::BeamSearchOption {
+    let bs_opt = BeamSearchOption {
         beam_width: 3,
         depth: T - 1,
     };
@@ -495,91 +505,102 @@ fn main() {
         dp_table: DpTable::new(),
     };
 
-    let ans_st = bs::search(&mut bs, st, &bs_opt, &mut rng);
+    let ans = search(&mut bs, st, &bs_opt, &mut rng);
 
-    for com in ans_st.ans.iter() {
+    for com in ans.iter() {
         println!("{}", com.to_str());
     }
-
-    eprintln!("score: {}", ans_st.money);
 
     eprintln!("{}ms", system_time.elapsed().unwrap().as_millis());
 }
 
-#[allow(dead_code)]
-mod bs {
-    use rand::rngs::ThreadRng;
-    use std::cmp::Ordering;
-    use std::collections::BinaryHeap;
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 
-    // 第一要素を比較対象とする組
-    struct ForSort<T> {
-        score: isize,
-        node: T,
+// 第一要素を比較対象とする組
+pub struct ForSort<T> {
+    score: isize,
+    pub node: T,
+}
+// ダミー
+impl<T> PartialEq for ForSort<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.score == other.score
     }
-    // ダミー
-    impl<T> PartialEq for ForSort<T> {
-        fn eq(&self, other: &Self) -> bool {
-            self.score == other.score
-        }
-    }
-    impl<T> Eq for ForSort<T> {}
+}
+impl<T> Eq for ForSort<T> {}
 
-    impl<T> PartialOrd for ForSort<T> {
-        fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-            self.score.partial_cmp(&other.score)
-        }
+impl<T> PartialOrd for ForSort<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        self.score.partial_cmp(&other.score)
     }
-    impl<T> Ord for ForSort<T> {
-        fn cmp(&self, other: &Self) -> Ordering {
-            self.score.cmp(&other.score)
-        }
+}
+impl<T> Ord for ForSort<T> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.score.cmp(&other.score)
     }
+}
 
-    pub struct BeamSearchOption {
-        pub beam_width: usize,
-        pub depth: usize,
-    }
-    pub trait BeamSearch {
-        type State: Clone;
+pub struct BeamSearchOption {
+    pub beam_width: usize,
+    pub depth: usize,
+}
+pub trait BeamSearchTrait {
+    type State: Clone;
 
-        fn transit(&mut self, st: &Self::State, rng: &mut ThreadRng) -> Vec<Self::State>;
-        fn evaluate(&self, st: &Self::State) -> isize;
-    }
-
-    pub fn search<A: BeamSearch>(
-        bs: &mut A,
-        init_st: A::State,
-        opt: &BeamSearchOption,
+    fn transit(
+        &mut self,
+        st: &Self::State,
         rng: &mut ThreadRng,
-    ) -> A::State {
-        let mut pq: BinaryHeap<ForSort<A::State>> = BinaryHeap::new();
-        pq.push(ForSort {
-            score: bs.evaluate(&init_st),
-            node: init_st.clone(),
-        });
-        for d in 1..=opt.depth {
-            let mut next_pq: BinaryHeap<ForSort<A::State>> = BinaryHeap::new();
-            if d % 100 == 0 {
-                eprintln!("day: {}", d);
-            }
-            for _ in 0..opt.beam_width {
-                if pq.is_empty() {
-                    break;
-                } else {
-                    let st = pq.pop().unwrap().node;
-                    for next_st in bs.transit(&st, rng) {
-                        next_pq.push(ForSort {
-                            score: bs.evaluate(&next_st),
-                            node: next_st,
-                        })
-                    }
+        next_commands_vec_index: usize,
+    ) -> Vec<Self::State>;
+    fn evaluate(&self, st: &Self::State) -> isize;
+}
+
+fn search(
+    bs: &mut BeamSearch,
+    init_st: State,
+    opt: &BeamSearchOption,
+    rng: &mut ThreadRng,
+) -> Vec<Command> {
+    let mut pq: BinaryHeap<ForSort<State>> = BinaryHeap::new();
+    let mut pre_commands_vec: Vec<Vec<Command>> = vec![vec![]];
+    pq.push(ForSort {
+        score: bs.evaluate(&init_st),
+        node: init_st.clone(),
+    });
+    for d in 1..=opt.depth {
+        let mut next_pq: BinaryHeap<ForSort<State>> = BinaryHeap::new();
+        let mut next_commands_vec = vec![];
+        if d % 100 == 0 {
+            eprintln!("day: {}", d);
+        }
+        for _ in 0..opt.beam_width {
+            if pq.is_empty() {
+                break;
+            } else {
+                let st = pq.pop().unwrap().node;
+                let mut commands = pre_commands_vec[st.pre_commands_index].clone();
+                commands.push(st.this_turn_command.clone());
+
+                next_commands_vec.push(commands);
+                let ncvi = next_commands_vec.len() - 1;
+                for next_st in bs.transit(&st, rng, ncvi) {
+                    next_pq.push(ForSort {
+                        score: bs.evaluate(&next_st),
+                        node: next_st,
+                    })
                 }
             }
-            pq = next_pq;
         }
-        pq.pop().unwrap().node
+        pq = next_pq;
+        pre_commands_vec = next_commands_vec;
     }
+    let ans_st = pq.pop().unwrap().node;
+    eprintln!("score: {}", ans_st.money);
+    let mut commands = pre_commands_vec[ans_st.pre_commands_index].clone();
+    commands.push(ans_st.this_turn_command);
+    commands
 }
 
 // 条件を満たす最小の値を返す
