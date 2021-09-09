@@ -121,6 +121,32 @@ impl Input {
     }
 }
 
+struct DpTable {
+    table: Vec<Vec<usize>>,
+    base: usize,
+}
+impl DpTable {
+    fn new() -> Self {
+        let base = 0;
+        DpTable {
+            table: vec![vec![base; N]; N],
+            base,
+        }
+    }
+
+    fn reset_base(&mut self) {
+        self.base += 1;
+    }
+
+    fn check(&self, pos: &Coord) -> bool {
+        *pos.access_matrix(&self.table) == self.base
+    }
+
+    fn done(&mut self, pos: &Coord) {
+        pos.set_matrix(&mut self.table, self.base);
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 enum Command {
     Buy(Coord),
@@ -139,23 +165,53 @@ impl Command {
 
 struct BeamSearch {
     input: Input,
-    init_score: isize,
+    dp_table: DpTable,
 }
 impl bs::BeamSearch for BeamSearch {
     type State = State;
 
     // １ターンに１機械任意に増やせるシミュレート
-    fn transit(&self, st: &Self::State) -> Vec<Self::State> {
+    fn transit(&mut self, st: &Self::State, rng: &mut ThreadRng) -> Vec<Self::State> {
         let mut res = vec![];
 
+        // 何もしないケース
         let mut stay_next_st = st.clone();
         stay_next_st.action(&self.input, Command::Wait);
         res.push(stay_next_st);
-        for neb in st.neighber_empty_blocks(&st.machines[0]) {
+
+        let mut machines = st.get_machines();
+        machines.shuffle(rng);
+        for neb in st.neighber_empty_blocks(&machines[0], &mut self.dp_table) {
             let mut next_st = st.clone();
-            // お金を払わずにマシンをセットする(ことで任意に増やせる場合のシミュレートをする)
-            next_st.money += st.buy_cost();
-            next_st.action(&self.input, Command::Buy(neb));
+
+            // 買えるなら買えばいい
+            let command = if st.can_buy() && st.machines_num <= 35 {
+                Command::Buy(neb)
+            } else {
+                let mut res = Command::Wait;
+
+                // 今ターン予定設置マスを妨げずに取り除ける、一番減少スコアが小さいマスを探す(一手読み)
+                // TODO: 予定のもの全てを織り込みたい
+                let mut min_value = 1e15 as usize;
+                next_st.set_machine(&neb);
+                for machine in machines.iter() {
+                    if *machine == neb {
+                        continue;
+                    }
+                    let value = st.get_today_value(&machine);
+                    if value < min_value {
+                        if next_st.can_cut_in_keep_connect(&machine, &mut self.dp_table) {
+                            min_value = value;
+                            res = Command::Move(machine.clone(), neb.clone());
+                        }
+                    }
+                }
+                next_st.delete_machine(&neb);
+
+                res
+            };
+
+            next_st.action(&self.input, command);
 
             res.push(next_st.clone());
         }
@@ -164,7 +220,47 @@ impl bs::BeamSearch for BeamSearch {
     }
 
     fn evaluate(&self, st: &Self::State) -> isize {
-        st.money as isize - self.init_score
+        st.total_money as isize
+    }
+}
+
+// (y: 0~7, y:8~15). 16*16 == 256 == 128 * 2
+// Vec<Vec<bool>> を表現. 横書き方向に１桁目から埋めていく.
+#[derive(Clone)]
+struct BoolMat(u128, u128);
+impl BoolMat {
+    fn get(&self, pos: &Coord) -> bool {
+        if pos.y <= 7 {
+            let i = pos.y * 16 + pos.x % 16;
+            self.0 & (1 << i) > 0
+        } else {
+            let i = (pos.y - 8) * 16 + pos.x % 16;
+            self.1 & (1 << i) > 0
+        }
+    }
+
+    fn put(&mut self, pos: &Coord) {
+        if pos.y <= 7 {
+            let i = pos.y * 16 + pos.x % 16;
+            self.0 = self.0 | (1 << i);
+        } else {
+            let i = (pos.y - 8) * 16 + pos.x % 16;
+            self.1 = self.1 | (1 << i);
+        }
+    }
+
+    fn delete(&mut self, pos: &Coord) {
+        if pos.y <= 7 {
+            let i = pos.y * 16 + pos.x % 16;
+            if self.0 & (1 << i) > 1 {
+                self.0 -= 1 << i;
+            }
+        } else {
+            let i = (pos.y - 8) * 16 + pos.x % 16;
+            if self.1 & (1 << i) > 0 {
+                self.1 -= 1 << i;
+            }
+        }
     }
 }
 
@@ -173,8 +269,9 @@ impl bs::BeamSearch for BeamSearch {
 struct State {
     day: usize,
     money: usize,
-    machines: Vec<Coord>,
-    machine_dim: Vec<Vec<bool>>,
+    total_money: usize, // これまでに得たお金の通算
+    machines_num: usize,
+    machine_dim: BoolMat,
     field: Vec<Vec<Option<Vegetable>>>,
     ans: Vec<Command>,
 }
@@ -183,8 +280,9 @@ impl State {
         let mut st = State {
             day: 0,
             money: 1,
-            machines: vec![],
-            machine_dim: vec![vec![false; N]; N],
+            total_money: 1,
+            machines_num: 0,
+            machine_dim: BoolMat(0, 0),
             field: vec![vec![None; N]; N],
             ans: vec![],
         };
@@ -193,7 +291,7 @@ impl State {
     }
 
     fn buy_cost(&self) -> usize {
-        let a = self.machines.len() + 1;
+        let a = self.machines_num + 1;
         a * a * a
     }
     // Buyコマンドを使えるか
@@ -202,12 +300,24 @@ impl State {
     }
 
     fn set_machine(&mut self, pos: &Coord) {
-        self.machines.push(pos.clone());
-        pos.set_matrix(&mut self.machine_dim, true);
+        self.machines_num += 1;
+        self.machine_dim.put(&pos);
     }
     fn delete_machine(&mut self, pos: &Coord) {
-        self.machines.retain(|p| *p != *pos);
-        pos.set_matrix(&mut self.machine_dim, false);
+        self.machines_num -= 1;
+        self.machine_dim.delete(&pos);
+    }
+    fn get_machines(&self) -> Vec<Coord> {
+        let mut res = vec![];
+        for y in 0..N {
+            for x in 0..N {
+                let pos = Coord::from_usize_pair((x, y));
+                if self.machine_dim.get(&pos) {
+                    res.push(pos);
+                }
+            }
+        }
+        res
     }
 
     // その日の残っているvalue
@@ -234,19 +344,19 @@ impl State {
     }
 
     // posの機械群に隣接する空きマスの一覧を返す
-    fn neighber_empty_blocks(&self, pos: &Coord) -> Vec<Coord> {
+    fn neighber_empty_blocks(&self, pos: &Coord, dp_table: &mut DpTable) -> Vec<Coord> {
         let mut res = vec![];
 
-        let mut dp = vec![vec![false; N]; N];
+        dp_table.reset_base();
         let mut q = VecDeque::new();
-        pos.set_matrix(&mut dp, true);
+        dp_table.done(&pos);
         q.push_back(pos.clone());
         while !q.is_empty() {
             let pos = q.pop_front().unwrap();
             for e in pos.mk_4dir() {
-                if !e.access_matrix(&dp) {
-                    if *e.access_matrix(&self.machine_dim) {
-                        e.set_matrix(&mut dp, true);
+                if !dp_table.check(&e) {
+                    if self.machine_dim.get(&e) {
+                        dp_table.done(&e);
                         q.push_back(e);
                     } else {
                         res.push(e);
@@ -259,18 +369,18 @@ impl State {
     }
 
     // pos に設置された機械と連結してる個数を返す（自身も数える）
-    fn count_connections(&self, pos: &Coord) -> usize {
-        let mut dp = vec![vec![false; N]; N];
+    fn count_connections(&self, pos: &Coord, dp_table: &mut DpTable) -> usize {
+        dp_table.reset_base();
         let mut cnt = 1;
         let mut q = VecDeque::new();
-        pos.set_matrix(&mut dp, true);
+        dp_table.done(&pos);
         q.push_back(pos.clone());
         while !q.is_empty() {
             let pos = q.pop_front().unwrap();
             for e in pos.mk_4dir() {
-                if !e.access_matrix(&dp) && *e.access_matrix(&self.machine_dim) {
+                if !dp_table.check(&e) && self.machine_dim.get(&e) {
                     cnt += 1;
-                    e.set_matrix(&mut dp, true);
+                    dp_table.done(&e);
                     q.push_back(e);
                 }
             }
@@ -279,22 +389,22 @@ impl State {
         cnt
     }
 
-    fn can_cut_in_keep_connect(&mut self, pos: &Coord) -> bool {
+    fn can_cut_in_keep_connect(&mut self, pos: &Coord, dp_table: &mut DpTable) -> bool {
         self.delete_machine(&pos);
         // 始点候補達
         let mut sps: Vec<Coord> = pos
             .mk_4dir()
             .into_iter()
-            .filter(|p| *p.access_matrix(&self.machine_dim))
+            .filter(|p| self.machine_dim.get(&p))
             .collect();
         let cnt = match sps.pop() {
             None => 0,
-            Some(p) => self.count_connections(&p),
+            Some(p) => self.count_connections(&p, dp_table),
         };
 
         self.set_machine(&pos);
 
-        cnt == self.machines.len() - 1
+        cnt == self.machines_num - 1
     }
 
     // valid　な操作が来る前提
@@ -318,10 +428,21 @@ impl State {
         self.ans.push(com);
 
         // calc money
-        for machine in &self.machines {
-            if let Some(veg) = machine.access_matrix(&self.field) {
-                self.money += veg.value * self.count_connections(&veg.pos);
-                machine.set_matrix(&mut self.field, None);
+        // Vecのメモリ割り当てを避けるために、get_machines を使っていない
+        for y in 0..N {
+            for x in 0..N {
+                let pos = Coord::from_usize_pair((x, y));
+                if self.machine_dim.get(&pos) {
+                    let machine = pos;
+                    if let Some(veg) = machine.access_matrix(&self.field) {
+                        // TODO: 連結状態は維持すると決めているため、固定値埋め込みにしているが、後々これで行けるかはわからん
+                        // let gain = veg.value * self.count_connections(&veg.pos);
+                        let gain = veg.value * self.machines_num;
+                        self.money += gain;
+                        self.total_money += gain;
+                        machine.set_matrix(&mut self.field, None);
+                    }
+                }
             }
         }
 
@@ -348,7 +469,7 @@ impl State {
 #[fastout]
 fn main() {
     let system_time = SystemTime::now();
-    let mut _rng = thread_rng();
+    let mut rng = thread_rng();
 
     input! {
         _: usize,
@@ -360,78 +481,34 @@ fn main() {
     let input = Input::new(rcsev);
     let mut st = State::new(&input);
 
+    // 初日
+    let command = Command::Buy(Coord::from_usize_pair((N / 2, N / 2)));
+    st.action(&input, command);
+
+    // 二日目以降
     let bs_opt = bs::BeamSearchOption {
-        beam_width: 10,
-        depth: 2,
+        beam_width: 3,
+        depth: T - 1,
+    };
+    let mut bs = BeamSearch {
+        input: input.clone(),
+        dp_table: DpTable::new(),
     };
 
-    for d in 0..T {
-        if d % 100 == 0 {
-            eprintln!("day: {}", d);
-        }
-        if d == 0 {
-            let command = Command::Buy(Coord::from_usize_pair((N / 2, N / 2)));
-            st.action(&input, command);
-            continue;
-        }
+    let ans_st = bs::search(&mut bs, st, &bs_opt, &mut rng);
 
-        // TODO: 毎回input cloneするの嫌そう
-        let bs = BeamSearch {
-            input: input.clone(),
-            init_score: st.money as isize,
-        };
-
-        let ans_st = bs::search(&bs, st.clone(), &bs_opt);
-
-        let n = (&st).machines.len();
-        // Buyで持ってるやつが、置きたい箇所
-        let to_target = ans_st.ans[d].clone();
-        let command = match to_target {
-            Command::Move(_, _) => unreachable!(),
-            Command::Wait => Command::Wait,
-            Command::Buy(pos) => {
-                // 買えるなら買えばいい
-                if st.can_buy() && n <= 35 {
-                    Command::Buy(pos)
-                } else {
-                    let mut res = Command::Wait;
-
-                    // 今ターン予定設置マスを妨げずに取り除る、一番減少スコアが小さいマスを探す(一手読み)
-                    // TODO: 予定のもの全てを織り込みたい
-                    let mut min_value = 1e15 as usize;
-                    st.set_machine(&pos);
-                    for machine in (&st).machines.clone().iter() {
-                        if *machine == pos {
-                            continue;
-                        }
-                        let value = st.get_today_value(&machine);
-                        if value < min_value {
-                            if st.can_cut_in_keep_connect(&machine) {
-                                min_value = value;
-                                res = Command::Move(machine.clone(), pos.clone());
-                            }
-                        }
-                    }
-                    st.delete_machine(&pos);
-
-                    res
-                }
-            }
-        };
-
-        st.action(&input, command);
-    }
-
-    for com in st.ans.iter() {
+    for com in ans_st.ans.iter() {
         println!("{}", com.to_str());
     }
 
-    eprintln!("score: {}", st.money);
+    eprintln!("score: {}", ans_st.money);
+
     eprintln!("{}ms", system_time.elapsed().unwrap().as_millis());
 }
 
 #[allow(dead_code)]
 mod bs {
+    use rand::rngs::ThreadRng;
     use std::cmp::Ordering;
     use std::collections::BinaryHeap;
 
@@ -466,24 +543,32 @@ mod bs {
     pub trait BeamSearch {
         type State: Clone;
 
-        fn transit(&self, st: &Self::State) -> Vec<Self::State>;
+        fn transit(&mut self, st: &Self::State, rng: &mut ThreadRng) -> Vec<Self::State>;
         fn evaluate(&self, st: &Self::State) -> isize;
     }
 
-    pub fn search<A: BeamSearch>(bs: &A, init_st: A::State, opt: &BeamSearchOption) -> A::State {
+    pub fn search<A: BeamSearch>(
+        bs: &mut A,
+        init_st: A::State,
+        opt: &BeamSearchOption,
+        rng: &mut ThreadRng,
+    ) -> A::State {
         let mut pq: BinaryHeap<ForSort<A::State>> = BinaryHeap::new();
         pq.push(ForSort {
             score: bs.evaluate(&init_st),
             node: init_st.clone(),
         });
-        for _ in 1..=opt.depth {
+        for d in 1..=opt.depth {
             let mut next_pq: BinaryHeap<ForSort<A::State>> = BinaryHeap::new();
+            if d % 100 == 0 {
+                eprintln!("day: {}", d);
+            }
             for _ in 0..opt.beam_width {
                 if pq.is_empty() {
                     break;
                 } else {
                     let st = pq.pop().unwrap().node;
-                    for next_st in bs.transit(&st) {
+                    for next_st in bs.transit(&st, rng) {
                         next_pq.push(ForSort {
                             score: bs.evaluate(&next_st),
                             node: next_st,
@@ -520,4 +605,33 @@ impl BinarySearch {
             },
         }
     }
+}
+
+#[allow(dead_code, unused)]
+fn read_file(file_path: String) -> Input {
+    use std::fs::File;
+    use std::io::prelude::*;
+    use std::io::BufReader;
+
+    let file = File::open(file_path).unwrap();
+    let mut buf_reader = BufReader::new(file);
+    let mut contents = String::new();
+    buf_reader.read_line(&mut String::new());
+    buf_reader.read_to_string(&mut contents);
+
+    let mut vegets = vec![];
+    for s in contents.split("\n") {
+        let v = s
+            .split(" ")
+            .map(|e| e.parse::<usize>().unwrap())
+            .collect::<Vec<_>>();
+        vegets.push(Vegetable {
+            pos: Coord::from_usize_pair((v[1], v[0])),
+            s_day: v[2],
+            e_day: v[3],
+            value: v[4],
+        });
+    }
+
+    Input { vegets }
 }
