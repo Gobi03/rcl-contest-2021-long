@@ -121,6 +121,32 @@ impl Input {
     }
 }
 
+struct DpTable {
+    table: Vec<Vec<usize>>,
+    base: usize,
+}
+impl DpTable {
+    fn new() -> Self {
+        let base = 0;
+        DpTable {
+            table: vec![vec![base; N]; N],
+            base,
+        }
+    }
+
+    fn reset_base(&mut self) {
+        self.base += 1;
+    }
+
+    fn check(&self, pos: &Coord) -> bool {
+        *pos.access_matrix(&self.table) == self.base
+    }
+
+    fn done(&mut self, pos: &Coord) {
+        pos.set_matrix(&mut self.table, self.base);
+    }
+}
+
 #[derive(Clone, PartialEq, Eq)]
 enum Command {
     Buy(Coord),
@@ -139,12 +165,13 @@ impl Command {
 
 struct BeamSearch {
     input: Input,
+    dpTable: DpTable,
 }
 impl bs::BeamSearch for BeamSearch {
     type State = State;
 
     // １ターンに１機械任意に増やせるシミュレート
-    fn transit(&self, st: &Self::State, rng: &mut ThreadRng) -> Vec<Self::State> {
+    fn transit(&mut self, st: &Self::State, rng: &mut ThreadRng) -> Vec<Self::State> {
         let mut res = vec![];
 
         // 何もしないケース
@@ -154,7 +181,7 @@ impl bs::BeamSearch for BeamSearch {
 
         let mut machines = st.get_machines();
         machines.shuffle(rng);
-        for neb in st.neighber_empty_blocks(&machines[0]) {
+        for neb in st.neighber_empty_blocks(&machines[0], &mut self.dpTable) {
             let mut next_st = st.clone();
 
             // 買えるなら買えばいい
@@ -317,19 +344,19 @@ impl State {
     }
 
     // posの機械群に隣接する空きマスの一覧を返す
-    fn neighber_empty_blocks(&self, pos: &Coord) -> Vec<Coord> {
+    fn neighber_empty_blocks(&self, pos: &Coord, dp_table: &mut DpTable) -> Vec<Coord> {
         let mut res = vec![];
 
-        let mut dp = vec![vec![false; N]; N];
+        dp_table.reset_base();
         let mut q = VecDeque::new();
-        pos.set_matrix(&mut dp, true);
+        dp_table.done(&pos);
         q.push_back(pos.clone());
         while !q.is_empty() {
             let pos = q.pop_front().unwrap();
             for e in pos.mk_4dir() {
-                if !e.access_matrix(&dp) {
+                if !dp_table.check(&e) {
                     if self.machine_dim.get(&e) {
-                        e.set_matrix(&mut dp, true);
+                        dp_table.done(&e);
                         q.push_back(e);
                     } else {
                         res.push(e);
@@ -461,11 +488,12 @@ fn main() {
         beam_width: 3,
         depth: T - 1,
     };
-    let bs = BeamSearch {
+    let mut bs = BeamSearch {
         input: input.clone(),
+        dpTable: DpTable::new(),
     };
 
-    let ans_st = bs::search(&bs, st, &bs_opt, &mut rng);
+    let ans_st = bs::search(&mut bs, st, &bs_opt, &mut rng);
 
     for com in ans_st.ans.iter() {
         println!("{}", com.to_str());
@@ -513,12 +541,12 @@ mod bs {
     pub trait BeamSearch {
         type State: Clone;
 
-        fn transit(&self, st: &Self::State, rng: &mut ThreadRng) -> Vec<Self::State>;
+        fn transit(&mut self, st: &Self::State, rng: &mut ThreadRng) -> Vec<Self::State>;
         fn evaluate(&self, st: &Self::State) -> isize;
     }
 
     pub fn search<A: BeamSearch>(
-        bs: &A,
+        bs: &mut A,
         init_st: A::State,
         opt: &BeamSearchOption,
         rng: &mut ThreadRng,
