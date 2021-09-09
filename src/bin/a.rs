@@ -20,7 +20,7 @@ use std::time::SystemTime;
 #[allow(dead_code)]
 const MOD: usize = 1e9 as usize + 7;
 
-const BEAM_WIDTH: usize = 100;
+const BEAM_WIDTH: usize = 4;
 
 const N: usize = 16; // NxN 区画
 const M: usize = 5000; // 野菜の数 M
@@ -100,6 +100,19 @@ struct Vegetable {
     pos: Coord,
     s_day: usize, // s_day の頭に生える
     e_day: usize, // e_day の最後に消える
+    value: usize,
+}
+impl Vegetable {
+    fn to_miniveget(&self) -> MiniVeget {
+        MiniVeget {
+            e_day: self.e_day,
+            value: self.value,
+        }
+    }
+}
+#[derive(Clone)]
+struct MiniVeget {
+    e_day: usize,
     value: usize,
 }
 
@@ -279,7 +292,7 @@ struct State {
     total_money: usize, // これまでに得たお金の通算
     machines_num: usize,
     machine_dim: BoolMat,
-    field: Vec<Vec<Option<Vegetable>>>,
+    field: Vec<Vec<Option<MiniVeget>>>,
     this_turn_command: Command,
     pre_commands_index: usize, // 高速化目的. bs::search内で使う
 }
@@ -347,7 +360,7 @@ impl State {
                 break;
             }
             if veg.s_day == self.day {
-                self.field[veg.pos.y as usize][veg.pos.x as usize] = Some(veg.clone());
+                self.field[veg.pos.y as usize][veg.pos.x as usize] = Some(veg.to_miniveget());
             }
         }
     }
