@@ -627,32 +627,3 @@ impl BinarySearch {
         }
     }
 }
-
-#[allow(dead_code, unused)]
-fn read_file(file_path: String) -> Input {
-    use std::fs::File;
-    use std::io::prelude::*;
-    use std::io::BufReader;
-
-    let file = File::open(file_path).unwrap();
-    let mut buf_reader = BufReader::new(file);
-    let mut contents = String::new();
-    buf_reader.read_line(&mut String::new());
-    buf_reader.read_to_string(&mut contents);
-
-    let mut vegets = vec![];
-    for s in contents.split("\n") {
-        let v = s
-            .split(" ")
-            .map(|e| e.parse::<usize>().unwrap())
-            .collect::<Vec<_>>();
-        vegets.push(Vegetable {
-            pos: Coord::from_usize_pair((v[1], v[0])),
-            s_day: v[2],
-            e_day: v[3],
-            value: v[4],
-        });
-    }
-
-    Input { vegets }
-}
