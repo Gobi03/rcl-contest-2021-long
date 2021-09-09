@@ -171,12 +171,17 @@ impl BeamSearchTrait for BeamSearch {
     type State = State;
 
     // １ターンに１機械任意に増やせるシミュレート
-    fn transit(&mut self, st: &Self::State, rng: &mut ThreadRng) -> Vec<Self::State> {
+    fn transit(
+        &mut self,
+        st: &Self::State,
+        rng: &mut ThreadRng,
+        next_commands_vec_index: usize,
+    ) -> Vec<Self::State> {
         let mut res = vec![];
 
         // 何もしないケース
         let mut stay_next_st = st.clone();
-        stay_next_st.action(&self.input, Command::Wait);
+        stay_next_st.action(&self.input, Command::Wait, next_commands_vec_index);
         res.push(stay_next_st);
 
         let mut machines = st.get_machines();
@@ -211,7 +216,7 @@ impl BeamSearchTrait for BeamSearch {
                 res
             };
 
-            next_st.action(&self.input, command);
+            next_st.action(&self.input, command, next_commands_vec_index);
 
             res.push(next_st.clone());
         }
@@ -410,10 +415,13 @@ impl State {
     }
 
     // valid　な操作が来る前提
-    fn action(&mut self, input: &Input, com: Command) {
+    fn action(&mut self, input: &Input, com: Command, next_commands_vec_index: usize) {
         if self.day == T {
             return;
         }
+
+        // 高速化用。search関数内で使う。
+        self.pre_commands_index = next_commands_vec_index;
 
         // do command
         match com {
@@ -427,7 +435,7 @@ impl State {
             }
             Command::Wait => (),
         }
-        self.ans.push(com);
+        self.this_turn_command = com;
 
         // calc money
         // Vecのメモリ割り当てを避けるために、get_machines を使っていない
@@ -485,7 +493,7 @@ fn main() {
 
     // 初日
     let command = Command::Buy(Coord::from_usize_pair((N / 2, N / 2)));
-    st.action(&input, command);
+    st.action(&input, command, 0);
 
     // 二日目以降
     let bs_opt = BeamSearchOption {
@@ -497,13 +505,11 @@ fn main() {
         dp_table: DpTable::new(),
     };
 
-    let ans_st = search(&mut bs, st, &bs_opt, &mut rng);
+    let ans = search(&mut bs, st, &bs_opt, &mut rng);
 
-    for com in ans_st.ans.iter() {
+    for com in ans.iter() {
         println!("{}", com.to_str());
     }
-
-    eprintln!("score: {}", ans_st.money);
 
     eprintln!("{}ms", system_time.elapsed().unwrap().as_millis());
 }
@@ -542,7 +548,12 @@ pub struct BeamSearchOption {
 pub trait BeamSearchTrait {
     type State: Clone;
 
-    fn transit(&mut self, st: &Self::State, rng: &mut ThreadRng) -> Vec<Self::State>;
+    fn transit(
+        &mut self,
+        st: &Self::State,
+        rng: &mut ThreadRng,
+        next_commands_vec_index: usize,
+    ) -> Vec<Self::State>;
     fn evaluate(&self, st: &Self::State) -> isize;
 }
 
@@ -553,7 +564,7 @@ fn search(
     rng: &mut ThreadRng,
 ) -> Vec<Command> {
     let mut pq: BinaryHeap<ForSort<State>> = BinaryHeap::new();
-    let mut pre_commands_vec: Vec<Vec<Command>> = vec![];
+    let mut pre_commands_vec: Vec<Vec<Command>> = vec![vec![]];
     pq.push(ForSort {
         score: bs.evaluate(&init_st),
         node: init_st.clone(),
@@ -586,7 +597,8 @@ fn search(
         pre_commands_vec = next_commands_vec;
     }
     let ans_st = pq.pop().unwrap().node;
-    let mut commands = pre_commands_vec[ans_st.pre_commands_index];
+    eprintln!("score: {}", ans_st.money);
+    let mut commands = pre_commands_vec[ans_st.pre_commands_index].clone();
     commands.push(ans_st.this_turn_command);
     commands
 }
