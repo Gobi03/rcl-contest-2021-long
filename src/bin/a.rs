@@ -21,6 +21,8 @@ use std::time::SystemTime;
 const MOD: usize = 1e9 as usize + 7;
 
 const BEAM_WIDTH: usize = 4;
+// 野菜の価値が最大価値の 1/VEGET_PRUNE_DIV を下回るケースを枝刈る
+const VEGET_PRUNE_DIV: usize = 20;
 
 const N: usize = 16; // NxN 区画
 const M: usize = 5000; // 野菜の数 M
@@ -509,12 +511,12 @@ fn main() {
     }
 
     let mut input = Input::new(rcsev);
-    // TODO: 野菜の価値が最大価値の20%を下回るケースを刈っている
-    // input0で2338個になった。
+    // TODO: 野菜の価値が最大価値の5%を下回るケースを刈っている
+    // input0で3,626個になった。
     input.vegets = input
         .vegets
         .into_iter()
-        .filter(|veg| veg.day_max_value() / 5 < veg.value)
+        .filter(|veg| veg.day_max_value() / VEGET_PRUNE_DIV < veg.value)
         .collect::<Vec<_>>();
     eprintln!("{}", input.vegets.len());
     let mut st = State::new(&input);
