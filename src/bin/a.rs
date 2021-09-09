@@ -20,6 +20,8 @@ use std::time::SystemTime;
 #[allow(dead_code)]
 const MOD: usize = 1e9 as usize + 7;
 
+const BEAM_WIDTH: usize = 100;
+
 const N: usize = 16; // NxN 区画
 const M: usize = 5000; // 野菜の数 M
 const T: usize = 1000; // 行動日数
@@ -497,7 +499,7 @@ fn main() {
 
     // 二日目以降
     let bs_opt = BeamSearchOption {
-        beam_width: 3,
+        beam_width: BEAM_WIDTH,
         depth: T - 1,
     };
     let mut bs = BeamSearch {
