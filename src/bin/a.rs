@@ -165,7 +165,7 @@ impl Command {
 
 struct BeamSearch {
     input: Input,
-    dpTable: DpTable,
+    dp_table: DpTable,
 }
 impl bs::BeamSearch for BeamSearch {
     type State = State;
@@ -181,7 +181,7 @@ impl bs::BeamSearch for BeamSearch {
 
         let mut machines = st.get_machines();
         machines.shuffle(rng);
-        for neb in st.neighber_empty_blocks(&machines[0], &mut self.dpTable) {
+        for neb in st.neighber_empty_blocks(&machines[0], &mut self.dp_table) {
             let mut next_st = st.clone();
 
             // 買えるなら買えばいい
@@ -200,7 +200,7 @@ impl bs::BeamSearch for BeamSearch {
                     }
                     let value = st.get_today_value(&machine);
                     if value < min_value {
-                        if next_st.can_cut_in_keep_connect(&machine) {
+                        if next_st.can_cut_in_keep_connect(&machine, &mut self.dp_table) {
                             min_value = value;
                             res = Command::Move(machine.clone(), neb.clone());
                         }
@@ -369,18 +369,18 @@ impl State {
     }
 
     // pos に設置された機械と連結してる個数を返す（自身も数える）
-    fn count_connections(&self, pos: &Coord) -> usize {
-        let mut dp = vec![vec![false; N]; N];
+    fn count_connections(&self, pos: &Coord, dp_table: &mut DpTable) -> usize {
+        dp_table.reset_base();
         let mut cnt = 1;
         let mut q = VecDeque::new();
-        pos.set_matrix(&mut dp, true);
+        dp_table.done(&pos);
         q.push_back(pos.clone());
         while !q.is_empty() {
             let pos = q.pop_front().unwrap();
             for e in pos.mk_4dir() {
-                if !e.access_matrix(&dp) && self.machine_dim.get(&e) {
+                if !dp_table.check(&e) && self.machine_dim.get(&e) {
                     cnt += 1;
-                    e.set_matrix(&mut dp, true);
+                    dp_table.done(&e);
                     q.push_back(e);
                 }
             }
@@ -389,7 +389,7 @@ impl State {
         cnt
     }
 
-    fn can_cut_in_keep_connect(&mut self, pos: &Coord) -> bool {
+    fn can_cut_in_keep_connect(&mut self, pos: &Coord, dp_table: &mut DpTable) -> bool {
         self.delete_machine(&pos);
         // 始点候補達
         let mut sps: Vec<Coord> = pos
@@ -399,7 +399,7 @@ impl State {
             .collect();
         let cnt = match sps.pop() {
             None => 0,
-            Some(p) => self.count_connections(&p),
+            Some(p) => self.count_connections(&p, dp_table),
         };
 
         self.set_machine(&pos);
@@ -435,7 +435,9 @@ impl State {
                 if self.machine_dim.get(&pos) {
                     let machine = pos;
                     if let Some(veg) = machine.access_matrix(&self.field) {
-                        let gain = veg.value * self.count_connections(&veg.pos);
+                        // TODO: 連結状態は維持すると決めているため、固定値埋め込みにしているが、後々これで行けるかはわからん
+                        // let gain = veg.value * self.count_connections(&veg.pos);
+                        let gain = veg.value * self.machines_num;
                         self.money += gain;
                         self.total_money += gain;
                         machine.set_matrix(&mut self.field, None);
@@ -490,7 +492,7 @@ fn main() {
     };
     let mut bs = BeamSearch {
         input: input.clone(),
-        dpTable: DpTable::new(),
+        dp_table: DpTable::new(),
     };
 
     let ans_st = bs::search(&mut bs, st, &bs_opt, &mut rng);
