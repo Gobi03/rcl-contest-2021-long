@@ -95,7 +95,7 @@ impl Coord {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 struct Vegetable {
     pos: Coord,
     s_day: usize, // s_day の頭に生える
@@ -108,6 +108,11 @@ impl Vegetable {
             e_day: self.e_day,
             value: self.value,
         }
+    }
+
+    // その開始日で出せる最大値を返す
+    fn day_max_value(&self) -> usize {
+        2.0_f64.powf(1.0 + (self.s_day as f64 / 100.0)) as usize
     }
 }
 #[derive(Clone)]
@@ -353,8 +358,8 @@ impl State {
     // その日が開始日の野菜の設置
     fn put_veget(&mut self, input: &Input) {
         let bs = BinarySearch { day: self.day };
-        let m = bs.solve(0, M, &input.vegets);
-        for i in m..M {
+        let m = bs.solve(0, input.vegets.len() - 1, &input.vegets);
+        for i in m..input.vegets.len() {
             let veg = &input.vegets[i];
             if veg.s_day > self.day {
                 break;
@@ -503,7 +508,15 @@ fn main() {
         rcsev: [(usize, usize, usize, usize, usize); M],
     }
 
-    let input = Input::new(rcsev);
+    let mut input = Input::new(rcsev);
+    // TODO: 野菜の価値が最大価値の20%を下回るケースを刈っている
+    // input0で2338個になった。
+    input.vegets = input
+        .vegets
+        .into_iter()
+        .filter(|veg| veg.day_max_value() / 5 < veg.value)
+        .collect::<Vec<_>>();
+    eprintln!("{}", input.vegets.len());
     let mut st = State::new(&input);
 
     // 初日
