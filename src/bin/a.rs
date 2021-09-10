@@ -23,6 +23,7 @@ const MOD: usize = 1e9 as usize + 7;
 const BEAM_WIDTH: usize = 4;
 // 野菜の価値が最大価値の 1/VEGET_PRUNE_DIV を下回るケースを枝刈る
 const VEGET_PRUNE_DIV: usize = 20;
+const PUT_VEGET_AHEAD_DAY: usize = 10;
 
 const N: usize = 16; // NxN 区画
 const M: usize = 5000; // 野菜の数 M
@@ -107,6 +108,7 @@ struct Vegetable {
 impl Vegetable {
     fn to_miniveget(&self) -> MiniVeget {
         MiniVeget {
+            s_day: self.s_day,
             e_day: self.e_day,
             value: self.value,
         }
@@ -117,8 +119,9 @@ impl Vegetable {
         2.0_f64.powf(1.0 + (self.s_day as f64 / 100.0)) as usize
     }
 }
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Debug)]
 struct MiniVeget {
+    s_day: usize,
     e_day: usize,
     value: usize,
 }
@@ -363,11 +366,13 @@ impl State {
         let m = bs.solve(0, input.vegets.len() - 1, &input.vegets);
         for i in m..input.vegets.len() {
             let veg = &input.vegets[i];
-            if veg.s_day > self.day {
+            if veg.s_day > self.day + PUT_VEGET_AHEAD_DAY {
                 break;
             }
-            if veg.s_day == self.day {
-                self.field[veg.pos.y as usize][veg.pos.x as usize] = Some(veg.to_miniveget());
+            if veg.s_day <= self.day + PUT_VEGET_AHEAD_DAY {
+                if *veg.pos.access_matrix(&self.field) == None {
+                    self.field[veg.pos.y as usize][veg.pos.x as usize] = Some(veg.to_miniveget());
+                }
             }
         }
     }
@@ -467,6 +472,10 @@ impl State {
                 if self.machine_dim.get(&pos) {
                     let machine = pos;
                     if let Some(veg) = machine.access_matrix(&self.field) {
+                        if veg.s_day > self.day {
+                            continue;
+                        }
+
                         // TODO: 連結状態は維持すると決めているため、固定値埋め込みにしているが、後々これで行けるかはわからん
                         // let gain = veg.value * self.count_connections(&veg.pos);
                         let gain = veg.value * self.machines_num;
