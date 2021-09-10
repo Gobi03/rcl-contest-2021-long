@@ -250,7 +250,7 @@ impl BeamSearchTrait for BeamSearch {
     }
 
     fn evaluate(&self, st: &Self::State) -> isize {
-        st.total_money as isize
+        (st.total_money + st.prospect_gain) as isize
     }
 }
 
@@ -300,6 +300,7 @@ struct State {
     day: usize,
     money: usize,
     total_money: usize, // これまでに得たお金の通算
+    prospect_gain: usize,
     machines_num: usize,
     machine_dim: BoolMat,
     field: Vec<Vec<Option<MiniVeget>>>,
@@ -312,6 +313,7 @@ impl State {
             day: 0,
             money: 1,
             total_money: 1,
+            prospect_gain: 0,
             machines_num: 0,
             machine_dim: BoolMat(0, 0),
             field: vec![vec![None; N]; N],
@@ -472,16 +474,21 @@ impl State {
                 if self.machine_dim.get(&pos) {
                     let machine = pos;
                     if let Some(veg) = machine.access_matrix(&self.field) {
-                        if veg.s_day > self.day {
-                            continue;
-                        }
+                        if self.day >= veg.s_day {
+                            // TODO: 連結状態は維持すると決めているため、固定値埋め込みにしているが、後々これで行けるかはわからん
+                            // let gain = veg.value * self.count_connections(&veg.pos);
+                            let gain = veg.value * self.machines_num;
+                            self.money += gain;
+                            self.total_money += gain;
+                            machine.set_matrix(&mut self.field, None);
+                        } else {
+                            // 未来に設置される野菜分も加点する
+                            // TODO: ある程度減点しても良いかも
 
-                        // TODO: 連結状態は維持すると決めているため、固定値埋め込みにしているが、後々これで行けるかはわからん
-                        // let gain = veg.value * self.count_connections(&veg.pos);
-                        let gain = veg.value * self.machines_num;
-                        self.money += gain;
-                        self.total_money += gain;
-                        machine.set_matrix(&mut self.field, None);
+                            // TODO: 連結状態は維持すると決めているため、固定値埋め込みにしているが、後々これで行けるかはわからん
+                            // let gain = veg.value * self.count_connections(&veg.pos);
+                            self.prospect_gain = veg.value * self.machines_num;
+                        }
                     }
                 }
             }
