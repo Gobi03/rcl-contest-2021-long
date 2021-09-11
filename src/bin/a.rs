@@ -20,10 +20,11 @@ use std::time::SystemTime;
 #[allow(dead_code)]
 const MOD: usize = 1e9 as usize + 7;
 
-const BEAM_WIDTH: usize = 4;
+const BEAM_WIDTH: usize = 40;
 // 野菜の価値が最大価値の 1/VEGET_PRUNE_DIV を下回るケースを枝刈る
 const VEGET_PRUNE_DIV: usize = 20;
 const PUT_VEGET_AHEAD_DAY: usize = 10;
+const PROSPECT_GAIN_WEIGHT: f64 = 0.5;
 
 const N: usize = 16; // NxN 区画
 const M: usize = 5000; // 野菜の数 M
@@ -209,48 +210,56 @@ impl BeamSearchTrait for BeamSearch {
         stay_next_st.action(&self.input, Command::Wait, next_commands_vec_index);
         res.push(stay_next_st);
 
-        let mut machines = st.get_machines();
+        // TODO: 中距離の高価値野菜が取れない
+        let mut machines: Vec<Coord> = st.get_machines();
         machines.shuffle(rng);
-        for neb in st.neighber_empty_blocks(&machines[0], &mut self.dp_table) {
-            let mut next_st = st.clone();
 
-            // 買えるなら買えばいい
-            let command = if st.can_buy() && st.machines_num <= 35 {
-                Command::Buy(neb)
-            } else {
-                let mut res = Command::Wait;
+        if machines.len() > 0 {
+            let target_block = st
+                .neighber_empty_blocks(&machines[0], &mut self.dp_table)
+                .into_iter()
+                .filter(|machine| machine.access_matrix(&st.field).is_some());
+            for neb in target_block {
+                let mut next_st = st.clone();
 
-                // 今ターン予定設置マスを妨げずに取り除ける、一番減少スコアが小さいマスを探す(一手読み)
-                // TODO: 予定のもの全てを織り込みたい
-                let mut min_value = 1e15 as usize;
-                next_st.set_machine(&neb);
-                for machine in machines.iter() {
-                    if *machine == neb {
-                        continue;
-                    }
-                    let value = st.get_today_value(&machine);
-                    if value < min_value {
-                        if next_st.can_cut_in_keep_connect(&machine, &mut self.dp_table) {
-                            min_value = value;
-                            res = Command::Move(machine.clone(), neb.clone());
+                // 買えるなら買えばいい
+                let command = if st.can_buy() && st.machines_num <= 35 {
+                    Command::Buy(neb)
+                } else {
+                    let mut res = Command::Wait;
+
+                    // 今ターン予定設置マスを妨げずに取り除ける、一番減少スコアが小さいマスを探す(一手読み)
+                    // TODO: 予定のもの全てを織り込みたい
+                    let mut min_value = 1e15 as usize;
+                    next_st.set_machine(&neb);
+                    for machine in machines.iter() {
+                        if *machine == neb {
+                            continue;
+                        }
+                        let value = st.get_today_value(&machine);
+                        if value < min_value {
+                            if next_st.can_cut_in_keep_connect(&machine, &mut self.dp_table) {
+                                min_value = value;
+                                res = Command::Move(machine.clone(), neb.clone());
+                            }
                         }
                     }
-                }
-                next_st.delete_machine(&neb);
+                    next_st.delete_machine(&neb);
 
-                res
-            };
+                    res
+                };
 
-            next_st.action(&self.input, command, next_commands_vec_index);
+                next_st.action(&self.input, command, next_commands_vec_index);
 
-            res.push(next_st.clone());
+                res.push(next_st.clone());
+            }
         }
 
         res
     }
 
-    fn evaluate(&self, st: &Self::State) -> isize {
-        (st.total_money + st.prospect_gain) as isize
+    fn evaluate(&self, st: &Self::State) -> f64 {
+        st.total_money as f64 + st.prospect_gain as f64 * PROSPECT_GAIN_WEIGHT
     }
 }
 
@@ -565,7 +574,7 @@ use std::collections::BinaryHeap;
 
 // 第一要素を比較対象とする組
 pub struct ForSort<T> {
-    score: isize,
+    score: f64,
     pub node: T,
 }
 // ダミー
@@ -583,7 +592,8 @@ impl<T> PartialOrd for ForSort<T> {
 }
 impl<T> Ord for ForSort<T> {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.score.cmp(&other.score)
+        // TODO: partial_cmp で大丈夫か
+        self.score.partial_cmp(&other.score).unwrap()
     }
 }
 
@@ -600,7 +610,7 @@ pub trait BeamSearchTrait {
         rng: &mut ThreadRng,
         next_commands_vec_index: usize,
     ) -> Vec<Self::State>;
-    fn evaluate(&self, st: &Self::State) -> isize;
+    fn evaluate(&self, st: &Self::State) -> f64;
 }
 
 fn search(
@@ -626,6 +636,9 @@ fn search(
                 break;
             } else {
                 let st = pq.pop().unwrap().node;
+                // if d == 4 {
+                //     eprintln!("{} {}", st.total_money, st.prospect_gain);
+                // }
                 let mut commands = pre_commands_vec[st.pre_commands_index].clone();
                 commands.push(st.this_turn_command.clone());
 
