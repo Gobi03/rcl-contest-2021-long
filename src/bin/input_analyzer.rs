@@ -1,8 +1,8 @@
 const INPUT_NUM: usize = 10;
 
-const N: usize = 16; // NxN 区画
-const M: usize = 5000; // 野菜の数 M
-const T: usize = 1000; // 行動日数
+// const N: usize = 16; // NxN 区画
+// const M: usize = 5000; // 野菜の数 M
+// const T: usize = 1000; // 行動日数
 
 fn main() {
     let input_path = "A/tester".to_string();

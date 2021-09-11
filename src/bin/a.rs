@@ -20,9 +20,9 @@ use std::time::SystemTime;
 #[allow(dead_code)]
 const MOD: usize = 1e9 as usize + 7;
 
-const BEAM_WIDTH: usize = 40;
+const BEAM_WIDTH: usize = 10;
 // 野菜の価値が最大価値の 1/VEGET_PRUNE_DIV を下回るケースを枝刈る
-const VEGET_PRUNE_DIV: usize = 20;
+const VEGET_PRUNE_DIV: usize = 15;
 const PUT_VEGET_AHEAD_DAY: usize = 10;
 const PROSPECT_GAIN_WEIGHT: f64 = 0.5;
 
@@ -218,7 +218,14 @@ impl BeamSearchTrait for BeamSearch {
             let target_block = st
                 .neighber_empty_blocks(&machines[0], &mut self.dp_table)
                 .into_iter()
-                .filter(|machine| machine.access_matrix(&st.field).is_some());
+                .filter(|machine| {
+                    // マシンが無くて、野菜があるマスに隣接している
+                    machine.access_matrix(&st.field).is_some() || {
+                        machine.mk_4dir().iter().any(|mov| {
+                            !mov.access_matrix(&st.field).is_some() && st.machine_dim.get(&mov)
+                        })
+                    }
+                });
             for neb in target_block {
                 let mut next_st = st.clone();
 
