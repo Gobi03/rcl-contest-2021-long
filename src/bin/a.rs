@@ -388,7 +388,6 @@ impl State {
         if self.can_buy() && self.day <= MODE_CHANGE_DAY {
             Command::Buy(put_pos)
         } else {
-            dp_table.reset_base();
             let mut res = Command::Wait;
 
             // 今ターン予定設置マスを妨げずに取り除ける、一番減少スコアが小さいマスを探す(一手読み)
@@ -616,10 +615,10 @@ fn main() {
         eprintln!("{}", st.day);
         // TODO: 残り数ターンは上位のマスの内 価値 / 距離 が最も大きいものに向かうようにしたい
         let vegs = st.get_vegets();
-        let machines = st.get_machines();
 
         // (価値/距離) が大きい順に並んだvegのリスト
         // (score, dist, veg) vec
+        let machines = st.get_machines();
         let mut v: Vec<_> = vegs
             .iter()
             .map(|veg| {
@@ -630,25 +629,28 @@ fn main() {
                     .unwrap();
                 (veg.value as f64 / dist as f64, dist, veg)
             })
+            .filter(|(_, dist, _)| *dist > 0)
             .collect();
         v.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
 
         let mut flag = false;
         for (_, dist, veg) in v {
-            if min(veg.e_day - st.day, T - st.day) <= dist as usize {
+            if min(veg.e_day - st.day, T - st.day) >= dist as usize {
                 // 辿り着くまでのコマンドを出力&stに適用
                 dp_table.reset_base();
                 let mut q = VecDeque::new();
                 dp_table.done(&veg.pos);
                 q.push_back((veg.pos.clone(), vec![veg.pos.clone()]));
                 while !q.is_empty() {
-                    let (pos, coms) = q.pop_front().unwrap();
+                    let (pos, mut coms) = q.pop_front().unwrap();
                     // machine群にくっついた
                     if st.machine_dim.get(&pos) {
                         // 辿り着くまでのコマンドを出力&stに適用
-                        eprintln!("{:?}", coms);
+                        eprintln!("{:?} {}", coms, dist);
+                        // eprintln!("{:?}", st.get_machines());
+                        coms.pop();
                         for &p in coms.iter().rev() {
-                            let command = st.make_command(p, &machines, &mut dp_table);
+                            let command = st.make_command(p, &st.get_machines(), &mut dp_table);
                             println!("{}", command.to_str());
                             st.action(&input, command, 42);
                         }
