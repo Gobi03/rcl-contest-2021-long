@@ -20,11 +20,12 @@ use std::time::SystemTime;
 #[allow(dead_code)]
 const MOD: usize = 1e9 as usize + 7;
 
-const BEAM_WIDTH: usize = 10;
+const BEAM_WIDTH: usize = 4;
 // 野菜の価値が最大価値の 1/VEGET_PRUNE_DIV を下回るケースを枝刈る
 const VEGET_PRUNE_DIV: usize = 15;
 const PUT_VEGET_AHEAD_DAY: usize = 10;
 const PROSPECT_GAIN_WEIGHT: f64 = 0.5;
+const MODE_CHANGE_DAY: usize = 800;
 
 const N: usize = 16; // NxN 区画
 const M: usize = 5000; // 野菜の数 M
@@ -125,6 +126,16 @@ struct MiniVeget {
     s_day: usize,
     e_day: usize,
     value: usize,
+}
+impl MiniVeget {
+    fn to_veg(&self, pos: Coord) -> Vegetable {
+        Vegetable {
+            pos,
+            s_day: self.s_day,
+            e_day: self.e_day,
+            value: self.value,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -230,31 +241,7 @@ impl BeamSearchTrait for BeamSearch {
                 let mut next_st = st.clone();
 
                 // 買えるなら買えばいい
-                let command = if st.can_buy() && st.machines_num <= 35 {
-                    Command::Buy(neb)
-                } else {
-                    let mut res = Command::Wait;
-
-                    // 今ターン予定設置マスを妨げずに取り除ける、一番減少スコアが小さいマスを探す(一手読み)
-                    // TODO: 予定のもの全てを織り込みたい
-                    let mut min_value = 1e15 as usize;
-                    next_st.set_machine(&neb);
-                    for machine in machines.iter() {
-                        if *machine == neb {
-                            continue;
-                        }
-                        let value = st.get_today_value(&machine);
-                        if value < min_value {
-                            if next_st.can_cut_in_keep_connect(&machine, &mut self.dp_table) {
-                                min_value = value;
-                                res = Command::Move(machine.clone(), neb.clone());
-                            }
-                        }
-                    }
-                    next_st.delete_machine(&neb);
-
-                    res
-                };
+                let command = next_st.make_command(neb, &machines, &mut self.dp_table);
 
                 next_st.action(&self.input, command, next_commands_vec_index);
 
@@ -378,6 +365,54 @@ impl State {
             .unwrap_or(0)
     }
 
+    fn get_vegets(&mut self) -> Vec<Vegetable> {
+        let mut res = vec![];
+        for y in 0..N {
+            for x in 0..N {
+                let pos = Coord::from_usize_pair((x, y));
+                if let Some(mini_veg) = pos.access_matrix(&self.field) {
+                    let veg = mini_veg.to_veg(pos);
+                    res.push(veg);
+                }
+            }
+        }
+        res
+    }
+
+    fn make_command(
+        &mut self,
+        put_pos: Coord,
+        machines: &Vec<Coord>,
+        dp_table: &mut DpTable,
+    ) -> Command {
+        if self.can_buy() && self.day <= MODE_CHANGE_DAY {
+            Command::Buy(put_pos)
+        } else {
+            dp_table.reset_base();
+            let mut res = Command::Wait;
+
+            // 今ターン予定設置マスを妨げずに取り除ける、一番減少スコアが小さいマスを探す(一手読み)
+            // TODO: 予定のもの全てを織り込みたい
+            let mut min_value = 1e15 as usize;
+            self.set_machine(&put_pos);
+            for machine in machines.iter() {
+                if *machine == put_pos {
+                    continue;
+                }
+                let value = self.get_today_value(&machine);
+                if value < min_value {
+                    if self.can_cut_in_keep_connect(&machine, dp_table) {
+                        min_value = value;
+                        res = Command::Move(machine.clone(), put_pos.clone());
+                    }
+                }
+            }
+            self.delete_machine(&put_pos);
+
+            res
+        }
+    }
+
     // その日が開始日の野菜の設置
     fn put_veget(&mut self, input: &Input) {
         let bs = BinarySearch { day: self.day };
@@ -466,7 +501,9 @@ impl State {
         }
 
         // 高速化用。search関数内で使う。
-        self.pre_commands_index = next_commands_vec_index;
+        if self.day < MODE_CHANGE_DAY {
+            self.pre_commands_index = next_commands_vec_index;
+        }
 
         // do command
         match com {
@@ -560,17 +597,86 @@ fn main() {
     // 二日目以降
     let bs_opt = BeamSearchOption {
         beam_width: BEAM_WIDTH,
-        depth: T - 1,
+        depth: MODE_CHANGE_DAY - 1,
     };
     let mut bs = BeamSearch {
         input: input.clone(),
         dp_table: DpTable::new(),
     };
 
-    let ans = search(&mut bs, st, &bs_opt, &mut rng);
-
-    for com in ans.iter() {
+    let (mid_ans, mid_st) = search(&mut bs, st, &bs_opt, &mut rng);
+    for com in mid_ans.iter() {
         println!("{}", com.to_str());
+    }
+
+    // 800日以降
+    let mut st = mid_st;
+    let mut dp_table = DpTable::new();
+    while st.day < T {
+        eprintln!("{}", st.day);
+        // TODO: 残り数ターンは上位のマスの内 価値 / 距離 が最も大きいものに向かうようにしたい
+        let vegs = st.get_vegets();
+        let machines = st.get_machines();
+
+        // (価値/距離) が大きい順に並んだvegのリスト
+        // (score, dist, veg) vec
+        let mut v: Vec<_> = vegs
+            .iter()
+            .map(|veg| {
+                let dist = machines
+                    .iter()
+                    .map(|machine| machine.distance(&veg.pos))
+                    .min()
+                    .unwrap();
+                (veg.value as f64 / dist as f64, dist, veg)
+            })
+            .collect();
+        v.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
+
+        let mut flag = false;
+        for (_, dist, veg) in v {
+            if min(veg.e_day - st.day, T - st.day) <= dist as usize {
+                // 辿り着くまでのコマンドを出力&stに適用
+                dp_table.reset_base();
+                let mut q = VecDeque::new();
+                dp_table.done(&veg.pos);
+                q.push_back((veg.pos.clone(), vec![veg.pos.clone()]));
+                while !q.is_empty() {
+                    let (pos, coms) = q.pop_front().unwrap();
+                    // machine群にくっついた
+                    if st.machine_dim.get(&pos) {
+                        // 辿り着くまでのコマンドを出力&stに適用
+                        eprintln!("{:?}", coms);
+                        for &p in coms.iter().rev() {
+                            let command = st.make_command(p, &machines, &mut dp_table);
+                            println!("{}", command.to_str());
+                            st.action(&input, command, 42);
+                        }
+                        //
+                        flag = true;
+                        break;
+                    } else {
+                        for next_pos in pos.mk_4dir() {
+                            if !dp_table.check(&next_pos) {
+                                dp_table.done(&next_pos);
+                                let mut next_coms = coms.clone();
+                                next_coms.push(next_pos);
+                                q.push_back((next_pos, next_coms))
+                            }
+                        }
+                    }
+                }
+            }
+            if flag {
+                break;
+            }
+        }
+
+        if !flag {
+            dbg!("hoge");
+            st.action(&input, Command::Wait, 0);
+            println!("{}", Command::Wait.to_str());
+        }
     }
 
     eprintln!("{}ms", system_time.elapsed().unwrap().as_millis());
@@ -625,7 +731,7 @@ fn search(
     init_st: State,
     opt: &BeamSearchOption,
     rng: &mut ThreadRng,
-) -> Vec<Command> {
+) -> (Vec<Command>, State) {
     let mut pq: BinaryHeap<ForSort<State>> = BinaryHeap::new();
     let mut pre_commands_vec: Vec<Vec<Command>> = vec![vec![]];
     pq.push(ForSort {
@@ -665,8 +771,9 @@ fn search(
     let ans_st = pq.pop().unwrap().node;
     eprintln!("score: {}", ans_st.money);
     let mut commands = pre_commands_vec[ans_st.pre_commands_index].clone();
-    commands.push(ans_st.this_turn_command);
-    commands
+    commands.push(ans_st.this_turn_command.clone());
+
+    (commands, ans_st)
 }
 
 // 条件を満たす最小の値を返す
