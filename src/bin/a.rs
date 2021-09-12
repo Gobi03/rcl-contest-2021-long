@@ -25,7 +25,8 @@ const BEAM_WIDTH: usize = 4;
 const VEGET_PRUNE_DIV: usize = 15;
 const PUT_VEGET_AHEAD_DAY: usize = 10;
 const PROSPECT_GAIN_WEIGHT: f64 = 0.5;
-const MODE_CHANGE_DAY: usize = 800;
+const MODE_CHANGE_DAY: usize = 400;
+const BUY_END_DAY: usize = 825;
 
 const N: usize = 16; // NxN 区画
 const M: usize = 5000; // 野菜の数 M
@@ -285,7 +286,7 @@ impl BoolMat {
     fn delete(&mut self, pos: &Coord) {
         if pos.y <= 7 {
             let i = pos.y * 16 + pos.x % 16;
-            if self.0 & (1 << i) > 1 {
+            if self.0 & (1 << i) > 0 {
                 self.0 -= 1 << i;
             }
         } else {
@@ -385,7 +386,7 @@ impl State {
         machines: &Vec<Coord>,
         dp_table: &mut DpTable,
     ) -> Command {
-        if self.can_buy() && self.day <= MODE_CHANGE_DAY {
+        if self.can_buy() && self.day <= BUY_END_DAY {
             Command::Buy(put_pos)
         } else {
             let mut res = Command::Wait;

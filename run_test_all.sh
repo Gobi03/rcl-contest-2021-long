@@ -7,7 +7,7 @@ tester_dir="A/tester"
 judge_file="${tester_dir}/judge.py"
 
 cargo build --release
-for test_num in `seq 1000`
+for test_num in `seq 100`
 do
     echo "$test_num"
     input_file="${tester_dir}/inputs/input_${test_num}.txt"
