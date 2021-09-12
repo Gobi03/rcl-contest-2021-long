@@ -20,7 +20,7 @@ use std::time::SystemTime;
 #[allow(dead_code)]
 const MOD: usize = 1e9 as usize + 7;
 
-const BEAM_WIDTH: usize = 4;
+const BEAM_WIDTH: usize = 20;
 // 野菜の価値が最大価値の 1/VEGET_PRUNE_DIV を下回るケースを枝刈る
 const VEGET_PRUNE_DIV: usize = 15;
 const PUT_VEGET_AHEAD_DAY: usize = 10;
