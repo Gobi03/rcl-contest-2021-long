@@ -612,7 +612,7 @@ fn main() {
     let mut st = mid_st;
     let mut dp_table = DpTable::new();
     while st.day < T {
-        eprintln!("{}", st.day);
+        // eprintln!("{}", st.day);
         // TODO: 残り数ターンは上位のマスの内 価値 / 距離 が最も大きいものに向かうようにしたい
         let vegs = st.get_vegets();
 
@@ -646,8 +646,7 @@ fn main() {
                     // machine群にくっついた
                     if st.machine_dim.get(&pos) {
                         // 辿り着くまでのコマンドを出力&stに適用
-                        eprintln!("{:?} {}", coms, dist);
-                        // eprintln!("{:?}", st.get_machines());
+                        // eprintln!("{:?} {}", coms, dist);
                         coms.pop();
                         for &p in coms.iter().rev() {
                             let command = st.make_command(p, &st.get_machines(), &mut dp_table);
@@ -675,7 +674,6 @@ fn main() {
         }
 
         if !flag {
-            dbg!("hoge");
             st.action(&input, Command::Wait, 0);
             println!("{}", Command::Wait.to_str());
         }
@@ -744,7 +742,7 @@ fn search(
         let mut next_pq: BinaryHeap<ForSort<State>> = BinaryHeap::new();
         let mut next_commands_vec = vec![];
         if d % 100 == 0 {
-            eprintln!("day: {}", d);
+            // eprintln!("day: {}", d);
         }
         for _ in 0..opt.beam_width {
             if pq.is_empty() {
