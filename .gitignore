@@ -1,3 +1,5 @@
 /target
 
-/A
+/A/visualizer
+/A/tester/__pycache__
+/A/tester/*.txt
